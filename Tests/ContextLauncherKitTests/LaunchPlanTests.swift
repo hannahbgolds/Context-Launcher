@@ -24,11 +24,12 @@ final class LaunchPlanTests: XCTestCase {
         var openedURLs: [URL] = []
         var failures = Set<URL>()
 
-        func openApplication(at url: URL) throws {
+        func openApplication(at url: URL) throws -> NSRunningApplication? {
             openedURLs.append(url)
             if failures.contains(url) {
                 throw CocoaError(.fileNoSuchFile)
             }
+            return nil
         }
     }
 
@@ -125,6 +126,23 @@ final class LaunchPlanTests: XCTestCase {
             .init(executable: fixtureCodeURL, arguments: ["--new-window", project.path])
         ])
         XCTAssertEqual(applicationOpener.openedURLs, [application.standardizedFileURL])
+        XCTAssertEqual(result.warnings.count, 2)
+    }
+
+    func testNilApplicationLaunchResultsBecomeWarningsAndLaterApplicationsStillRun() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let firstApplication = directory.appendingPathComponent("First.app")
+        let secondApplication = directory.appendingPathComponent("Second.app")
+        try FileManager.default.createDirectory(at: firstApplication, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondApplication, withIntermediateDirectories: true)
+        let applicationOpener = RecordingApplicationOpener()
+        let launcher = ContextLauncher(environment: LaunchEnvironment(), applicationOpener: applicationOpener)
+        let context = LauncherContext(id: "work", name: "Work", applications: [firstApplication, secondApplication])
+
+        let result = launcher.launch(context)
+
+        XCTAssertEqual(applicationOpener.openedURLs, [firstApplication.standardizedFileURL, secondApplication.standardizedFileURL])
         XCTAssertEqual(result.warnings.count, 2)
     }
 

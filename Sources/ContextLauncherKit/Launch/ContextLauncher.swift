@@ -2,15 +2,31 @@ import AppKit
 import Foundation
 
 public protocol ApplicationOpening: AnyObject {
-    func openApplication(at url: URL) throws
+    func openApplication(at url: URL) throws -> NSRunningApplication?
 }
 
 public final class WorkspaceApplicationOpener: ApplicationOpening {
     public init() {}
 
-    public func openApplication(at url: URL) throws {
-        NSWorkspace.shared.openApplication(at: url, configuration: .init())
+    public func openApplication(at url: URL) throws -> NSRunningApplication? {
+        let state = ApplicationLaunchState()
+        NSWorkspace.shared.openApplication(at: url, configuration: .init()) { application, error in
+            state.application = application
+            state.error = error
+            state.semaphore.signal()
+        }
+        state.semaphore.wait()
+        if let error = state.error {
+            throw error
+        }
+        return state.application
     }
+}
+
+private final class ApplicationLaunchState: @unchecked Sendable {
+    let semaphore = DispatchSemaphore(value: 0)
+    var application: NSRunningApplication?
+    var error: Error?
 }
 
 /// An optional adapter for the best-effort Chrome window targeting path.
@@ -24,6 +40,17 @@ public struct LaunchResult: Equatable, Sendable {
 
     public init(warnings: [String] = []) {
         self.warnings = warnings
+    }
+}
+
+public enum LaunchError: LocalizedError {
+    case applicationDidNotLaunch(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .applicationDidNotLaunch(url):
+            return "Application did not launch: \(url.path)"
+        }
     }
 }
 
@@ -72,7 +99,9 @@ public final class ContextLauncher {
         case let .vscode(executable, arguments):
             try processRunner.run(executable: executable, arguments: arguments)
         case let .application(url):
-            try applicationOpener.openApplication(at: url)
+            guard try applicationOpener.openApplication(at: url) != nil else {
+                throw LaunchError.applicationDidNotLaunch(url)
+            }
         }
     }
 }
