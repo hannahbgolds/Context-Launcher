@@ -53,7 +53,9 @@ public struct LauncherBundleGenerator {
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
         let bundle = bundleURL(for: id, in: destination)
         let staging = destination.appendingPathComponent(".\(id)-\(UUID().uuidString).app", isDirectory: true)
+        let compilerCache = destination.appendingPathComponent(".\(id)-\(UUID().uuidString).module-cache", isDirectory: true)
         defer { try? fileManager.removeItem(at: staging) }
+        defer { try? fileManager.removeItem(at: compilerCache) }
 
         let contents = staging.appendingPathComponent("Contents", isDirectory: true)
         let macOS = contents.appendingPathComponent("MacOS", isDirectory: true)
@@ -73,7 +75,10 @@ public struct LauncherBundleGenerator {
         ]
         let plistData = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try plistData.write(to: contents.appendingPathComponent("Info.plist"))
-        try compileLauncher(cliURL: cliURL, arguments: arguments, destination: macOS.appendingPathComponent("launcher"))
+        try compileLauncher(cliURL: cliURL, arguments: arguments, destination: macOS.appendingPathComponent("launcher"), moduleCacheURL: compilerCache)
+        if fileManager.fileExists(atPath: compilerCache.path) {
+            try fileManager.removeItem(at: compilerCache)
+        }
         try iconRenderer.render(icon, destination: resources.appendingPathComponent("AppIcon.icns"))
         guard isValidBundle(at: staging, identifier: bundleIdentifier(for: id)) else { throw LauncherBundleError.invalidBundle }
 
@@ -85,7 +90,7 @@ public struct LauncherBundleGenerator {
         return bundle
     }
 
-    private func compileLauncher(cliURL: URL, arguments: [String], destination: URL) throws {
+    private func compileLauncher(cliURL: URL, arguments: [String], destination: URL, moduleCacheURL: URL) throws {
         let source = destination.deletingLastPathComponent().appendingPathComponent("launcher.swift")
         defer { try? FileManager.default.removeItem(at: source) }
         let literals = ([cliURL.path] + arguments).map(swiftStringLiteral).joined(separator: ", ")
@@ -110,7 +115,7 @@ public struct LauncherBundleGenerator {
         compiler.executableURL = URL(fileURLWithPath: "/usr/bin/swiftc")
         compiler.arguments = [source.path, "-o", destination.path]
         compiler.environment = ProcessInfo.processInfo.environment.merging([
-            "CLANG_MODULE_CACHE_PATH": destination.deletingLastPathComponent().appendingPathComponent("module-cache").path
+            "CLANG_MODULE_CACHE_PATH": moduleCacheURL.path
         ]) { _, replacement in replacement }
         try compiler.run()
         compiler.waitUntilExit()

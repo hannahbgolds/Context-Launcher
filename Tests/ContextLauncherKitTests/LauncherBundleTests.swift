@@ -33,6 +33,11 @@ final class LauncherBundleTests: XCTestCase {
         let launcher = bundle.appendingPathComponent("Contents/MacOS/launcher")
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: launcher.path))
         XCTAssertNotNil(NSImage(contentsOf: bundle.appendingPathComponent("Contents/Resources/AppIcon.icns")))
+        XCTAssertEqual(try runtimeFiles(in: bundle), [
+            "Contents/Info.plist",
+            "Contents/MacOS/launcher",
+            "Contents/Resources/AppIcon.icns"
+        ])
 
         let process = Process()
         process.executableURL = launcher
@@ -91,5 +96,15 @@ final class LauncherBundleTests: XCTestCase {
         try Data(script.utf8).write(to: cliURL)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cliURL.path)
         return cliURL
+    }
+
+    private func runtimeFiles(in bundle: URL) throws -> [String] {
+        let enumerator = FileManager.default.enumerator(at: bundle, includingPropertiesForKeys: [.isDirectoryKey])!
+        return try enumerator.compactMap { element in
+            let url = element as! URL
+            guard try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory != true,
+                  let bundleIndex = url.pathComponents.lastIndex(of: bundle.lastPathComponent) else { return nil }
+            return url.pathComponents.dropFirst(bundleIndex + 1).joined(separator: "/")
+        }.sorted()
     }
 }
