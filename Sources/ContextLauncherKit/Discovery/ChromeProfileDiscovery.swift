@@ -45,4 +45,14 @@ public enum ChromeProfileDiscovery {
             throw Error.unreadableLocalState
         }
     }
+
+    /// Returns the first standard Chrome application location that exists.
+    public static func discoverApplicationURL(fileManager: FileManager = .default, environment: [String: String] = ProcessInfo.processInfo.environment) -> URL? {
+        let home = environment["HOME"] ?? NSHomeDirectory()
+        let candidates = [
+            URL(fileURLWithPath: "/Applications/Google Chrome.app"),
+            URL(fileURLWithPath: home).appendingPathComponent("Applications/Google Chrome.app")
+        ]
+        return candidates.first { fileManager.fileExists(atPath: $0.path) }
+    }
 }
