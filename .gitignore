@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+.swiftpm/
+.superpowers/
+.worktrees/
+xcuserdata/
+DerivedData/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# User configuration and local Chrome metadata must never enter the repository.
+contexts.json
+Local State
