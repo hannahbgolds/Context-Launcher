@@ -8,3 +8,9 @@ public enum StarterContexts {
         LauncherContext(id: "org", name: "Org", subtitle: "Organization", icon: .symbol("person.3"))
     ]
 }
+
+public enum OnboardingState {
+    public static func needsOnboarding(contexts: [LauncherContext]) -> Bool {
+        contexts.isEmpty
+    }
+}
