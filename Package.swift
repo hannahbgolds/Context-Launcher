@@ -5,10 +5,12 @@ let package = Package(
     name: "ContextLauncherKit",
     platforms: [.macOS(.v13)],
     products: [
-        .library(name: "ContextLauncherKit", targets: ["ContextLauncherKit"])
+        .library(name: "ContextLauncherKit", targets: ["ContextLauncherKit"]),
+        .executable(name: "context", targets: ["context"])
     ],
     targets: [
         .target(name: "ContextLauncherKit"),
+        .executableTarget(name: "context", dependencies: ["ContextLauncherKit"]),
         .testTarget(name: "ContextLauncherKitTests", dependencies: ["ContextLauncherKit"])
     ]
 )
