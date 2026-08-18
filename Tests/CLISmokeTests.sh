@@ -13,4 +13,5 @@ mkdir -p "$TEST_DIRECTORY/support/bin"
 cp "$BIN" "$TEST_DIRECTORY/support/bin/context"
 printf '%s\n' '{"contexts":[],"version":1}' > "$TEST_DIRECTORY/support/contexts.json"
 CONTEXT_LAUNCHER_HOME="$TEST_DIRECTORY/support" INSTALL_ROOT="$TEST_DIRECTORY/Applications" "$TEST_DIRECTORY/support/bin/context" internal-generate-all
-test -f "$TEST_DIRECTORY/Applications/new.app/Contents/Info.plist"
+test -f "$TEST_DIRECTORY/Applications/New.app/Contents/Info.plist"
+test "$(find "$TEST_DIRECTORY/Applications" -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)" = 'New.app'

@@ -69,6 +69,56 @@ final class DoctorTests: XCTestCase {
         XCTAssertTrue(diagnostics.contains { $0.code == "launcher.invalid" && $0.status == .failure })
     }
 
+    func testDoctorReportsChromeProfilesAndMissingConfiguredProfile() throws {
+        let localStateURL = temporaryDirectory.appendingPathComponent("Local State")
+        try Data(#"{"profile":{"info_cache":{"Default":{"name":"Personal"}}}}"#.utf8).write(to: localStateURL)
+        let diagnostics = Doctor.run(
+            environment: DoctorEnvironment(
+                configurationDirectory: temporaryDirectory.appendingPathComponent("config"),
+                launcherDirectory: temporaryDirectory.appendingPathComponent("Applications"),
+                launchEnvironment: LaunchEnvironment(),
+                chromeLocalStateURL: localStateURL
+            ),
+            contexts: [LauncherContext(id: "work", name: "Work", chromeProfileID: "Missing")]
+        )
+
+        XCTAssertTrue(diagnostics.contains { $0.code == "chrome.profiles" && $0.status == .pass && $0.message.contains("Personal (Default)") })
+        XCTAssertTrue(diagnostics.contains { $0.code == "chrome.profile.missing" && $0.status == .warning && $0.message.contains("Missing") })
+    }
+
+    func testDoctorWarnsWhenConfiguredChromeProfileMetadataIsUnavailable() {
+        let diagnostics = Doctor.run(
+            environment: DoctorEnvironment(
+                configurationDirectory: temporaryDirectory.appendingPathComponent("config"),
+                launcherDirectory: temporaryDirectory.appendingPathComponent("Applications"),
+                launchEnvironment: LaunchEnvironment(),
+                chromeLocalStateURL: temporaryDirectory.appendingPathComponent("missing-local-state")
+            ),
+            contexts: [LauncherContext(id: "work", name: "Work", chromeProfileID: "Default")]
+        )
+
+        XCTAssertTrue(diagnostics.contains { $0.code == "chrome.profile.unavailable" && $0.status == .warning && $0.message.contains("Default") })
+    }
+
+    func testDoctorDoesNotTreatFilesAsDirectories() throws {
+        let configuration = temporaryDirectory.appendingPathComponent("config")
+        let launchers = temporaryDirectory.appendingPathComponent("Applications")
+        try Data().write(to: configuration)
+        try Data().write(to: launchers)
+
+        let diagnostics = Doctor.run(
+            environment: DoctorEnvironment(
+                configurationDirectory: configuration,
+                launcherDirectory: launchers,
+                launchEnvironment: LaunchEnvironment()
+            ),
+            contexts: []
+        )
+
+        XCTAssertTrue(diagnostics.contains { $0.code == "config.directory" && $0.status == .warning })
+        XCTAssertTrue(diagnostics.contains { $0.code == "launcher.directory" && $0.status == .warning })
+    }
+
     private var fixtureEnvironment: DoctorEnvironment {
         DoctorEnvironment(
             configurationDirectory: temporaryDirectory.appendingPathComponent("config"),

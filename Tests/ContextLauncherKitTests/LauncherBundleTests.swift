@@ -77,6 +77,8 @@ final class LauncherBundleTests: XCTestCase {
         let bundle = try generator.generateNewLauncher(cliURL: cliURL, in: temporaryDirectory)
         let launcher = bundle.appendingPathComponent("Contents/MacOS/launcher")
 
+        XCTAssertEqual(bundle.lastPathComponent, "New.app")
+
         let process = Process()
         process.executableURL = launcher
         try process.run()

@@ -22,11 +22,20 @@ public struct DoctorEnvironment: @unchecked Sendable {
     public var configurationDirectory: URL
     public var launcherDirectory: URL
     public var launchEnvironment: LaunchEnvironment
+    public var chromeLocalStateURL: URL
 
-    public init(configurationDirectory: URL, launcherDirectory: URL, launchEnvironment: LaunchEnvironment = .system) {
+    public init(
+        configurationDirectory: URL,
+        launcherDirectory: URL,
+        launchEnvironment: LaunchEnvironment = .system,
+        chromeLocalStateURL: URL? = nil
+    ) {
         self.configurationDirectory = configurationDirectory
         self.launcherDirectory = launcherDirectory
         self.launchEnvironment = launchEnvironment
+        self.chromeLocalStateURL = chromeLocalStateURL
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/Google/Chrome/Local State")
     }
 }
 
@@ -59,6 +68,10 @@ public enum Doctor {
                 required: contexts.contains { !$0.vscodeProjects.isEmpty }
             )
         ]
+        diagnostics += chromeProfileDiagnostics(
+            localStateURL: environment.chromeLocalStateURL,
+            configuredProfileIDs: Set(contexts.compactMap(\.chromeProfileID).filter { !$0.isEmpty }).sorted()
+        )
 
         for context in contexts {
             diagnostics.append(launcherDiagnostic(for: context, in: environment.launcherDirectory, fileManager: fileManager))
@@ -86,11 +99,12 @@ public enum Doctor {
     }
 
     private static func directoryDiagnostic(code: String, label: String, url: URL, fileManager: FileManager) -> Diagnostic {
-        let exists = fileManager.fileExists(atPath: url.path)
+        var isDirectory: ObjCBool = false
+        let exists = fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
         return Diagnostic(
             code: code,
             status: exists ? .pass : .warning,
-            message: exists ? "\(label): \(url.path)" : "\(label) is missing: \(url.path)"
+            message: exists ? "\(label): \(url.path)" : "\(label) is unavailable: \(url.path)"
         )
     }
 
@@ -103,6 +117,42 @@ public enum Doctor {
             )
         }
         return Diagnostic(code: code, status: .pass, message: "\(label): \(url.path)")
+    }
+
+    private static func chromeProfileDiagnostics(localStateURL: URL, configuredProfileIDs: [String]) -> [Diagnostic] {
+        do {
+            let profiles = try ChromeProfileDiscovery.discover(localStateURL: localStateURL)
+            var diagnostics = [Diagnostic(
+                code: "chrome.profiles",
+                status: .pass,
+                message: profiles.isEmpty
+                    ? "No Chrome profiles were found."
+                    : "Chrome profiles: \(profiles.map { "\($0.name) (\($0.directoryID))" }.joined(separator: ", "))"
+            )]
+            let discoveredIDs = Set(profiles.map(\.directoryID))
+            diagnostics += configuredProfileIDs.filter { !discoveredIDs.contains($0) }.map {
+                Diagnostic(
+                    code: "chrome.profile.missing",
+                    status: .warning,
+                    message: "Configured Chrome profile was not found: \($0)"
+                )
+            }
+            return diagnostics
+        } catch {
+            var diagnostics = [Diagnostic(
+                code: "chrome.profiles",
+                status: .warning,
+                message: "Chrome profile metadata is unavailable: \(localStateURL.path)"
+            )]
+            diagnostics += configuredProfileIDs.map {
+                Diagnostic(
+                    code: "chrome.profile.unavailable",
+                    status: .warning,
+                    message: "Configured Chrome profile could not be checked: \($0)"
+                )
+            }
+            return diagnostics
+        }
     }
 
     private static func launcherDiagnostic(for context: LauncherContext, in directory: URL, fileManager: FileManager) -> Diagnostic {

@@ -133,7 +133,7 @@ public struct LauncherBundleGenerator {
     }
 
     private func bundleURL(for id: String, in destination: URL) -> URL {
-        destination.appendingPathComponent("\(id).app", isDirectory: true)
+        destination.appendingPathComponent(id == "new" ? "New.app" : "\(id).app", isDirectory: true)
     }
 
     private func bundleIdentifier(for id: String) -> String {
