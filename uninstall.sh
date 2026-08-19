@@ -16,28 +16,50 @@ fi
 
 INSTALL_ROOT=${INSTALL_ROOT:-"$HOME/Applications"}
 CONTEXT_LAUNCHER_HOME=${CONTEXT_LAUNCHER_HOME:-"$HOME/Library/Application Support/ContextLauncher"}
-case "$INSTALL_ROOT" in
-    /*) ;;
-    *) echo "INSTALL_ROOT must be absolute." >&2; exit 64 ;;
-esac
-case "$CONTEXT_LAUNCHER_HOME" in
-    /*) ;;
-    *) echo "CONTEXT_LAUNCHER_HOME must be absolute." >&2; exit 64 ;;
-esac
+case "$INSTALL_ROOT" in /*) ;; *) echo "INSTALL_ROOT must be absolute." >&2; exit 64 ;; esac
+case "$CONTEXT_LAUNCHER_HOME" in /*) ;; *) echo "CONTEXT_LAUNCHER_HOME must be absolute." >&2; exit 64 ;; esac
 
+SUPPORT_WAS_SYMLINK=false
+if [ -L "$CONTEXT_LAUNCHER_HOME" ]; then
+    SUPPORT_WAS_SYMLINK=true
+elif [ -d "$CONTEXT_LAUNCHER_HOME" ]; then
+    CONTEXT_LAUNCHER_HOME=$(cd -P "$CONTEXT_LAUNCHER_HOME" && pwd)
+fi
 if [ -d "$INSTALL_ROOT" ]; then
     INSTALL_ROOT=$(cd -P "$INSTALL_ROOT" && pwd)
 fi
-if [ -d "$CONTEXT_LAUNCHER_HOME" ]; then
-    CONTEXT_LAUNCHER_HOME=$(cd -P "$CONTEXT_LAUNCHER_HOME" && pwd)
-fi
+
+SUPPORT_MARKER="$CONTEXT_LAUNCHER_HOME/.context-launcher-install"
+CLI_DIRECTORY="$CONTEXT_LAUNCHER_HOME/bin"
+CLI_PATH="$CLI_DIRECTORY/context"
+CLI_HASH_PATH="$CLI_DIRECTORY/.context-launcher-context.sha256"
 
 is_owned_bundle() {
     bundle_path=$1
     bundle_id=$2
     plist_path="$bundle_path/Contents/Info.plist"
-    [ -f "$plist_path" ] && command -v plutil >/dev/null 2>&1 && \
+    [ -d "$bundle_path" ] && [ ! -L "$bundle_path" ] && [ -f "$plist_path" ] && \
+        command -v plutil >/dev/null 2>&1 && \
         [ "$(plutil -extract CFBundleIdentifier raw -o - "$plist_path" 2>/dev/null || true)" = "$bundle_id" ]
+}
+
+is_owned_support_root() {
+    [ "$SUPPORT_WAS_SYMLINK" = false ] && [ -d "$CONTEXT_LAUNCHER_HOME" ] && [ ! -L "$CONTEXT_LAUNCHER_HOME" ] || return 1
+    case "$CONTEXT_LAUNCHER_HOME" in
+        /|"$HOME"|"${TMPDIR:-/tmp}"|/tmp|/private/tmp) return 1 ;;
+    esac
+    [ "$(dirname "$CONTEXT_LAUNCHER_HOME")" != / ] || return 1
+    [ -f "$SUPPORT_MARKER" ] && [ ! -L "$SUPPORT_MARKER" ] || return 1
+    [ "$(sed -n '1p' "$SUPPORT_MARKER")" = 'context-launcher-install-root-v1' ] && \
+        [ "$(sed -n '2p' "$SUPPORT_MARKER")" = "$CONTEXT_LAUNCHER_HOME" ]
+}
+
+is_owned_cli() {
+    is_owned_support_root && command -v shasum >/dev/null 2>&1 && \
+        [ -d "$CLI_DIRECTORY" ] && [ ! -L "$CLI_DIRECTORY" ] && \
+        [ -f "$CLI_PATH" ] && [ ! -L "$CLI_PATH" ] && \
+        [ -f "$CLI_HASH_PATH" ] && [ ! -L "$CLI_HASH_PATH" ] && \
+        [ "$(shasum -a 256 "$CLI_PATH" | awk '{ print $1 }')" = "$(sed -n '1p' "$CLI_HASH_PATH")" ]
 }
 
 APPLICATION_PATH="$INSTALL_ROOT/Context Launcher.app"
@@ -45,33 +67,32 @@ if [ -d "$APPLICATION_PATH" ] && is_owned_bundle "$APPLICATION_PATH" "dev.contex
     rm -R "$APPLICATION_PATH"
 fi
 
-if [ -d "$INSTALL_ROOT" ]; then
-    find "$INSTALL_ROOT" -maxdepth 1 -type d -name '*.app' -print | while IFS= read -r bundle_path; do
-        bundle_name=$(basename "$bundle_path")
-        if [ "$bundle_name" = "New.app" ]; then
-            bundle_id=new
-        else
-            bundle_id=${bundle_name%.app}
-            case "$bundle_id" in
-                *[!a-z0-9-]* | -* | *- | *--* | '') continue ;;
-            esac
-        fi
-        if is_owned_bundle "$bundle_path" "dev.contextlauncher.context.$bundle_id"; then
-            rm -R "$bundle_path"
-        fi
-    done
+if is_owned_bundle "$INSTALL_ROOT/New.app" "dev.contextlauncher.context.new"; then
+    rm -R "$INSTALL_ROOT/New.app"
 fi
 
-CLI_PATH="$CONTEXT_LAUNCHER_HOME/bin/context"
-if [ -f "$CLI_PATH" ]; then
-    rm -f "$CLI_PATH"
+if is_owned_cli; then
+    IDS_PATH=$(mktemp "${TMPDIR:-/tmp}/context-launcher-uninstall.XXXXXX")
+    trap 'rm -f "$IDS_PATH"' EXIT HUP INT TERM
+    if CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" "$CLI_PATH" list > "$IDS_PATH"; then
+        TAB=$(printf '\t')
+        while IFS="$TAB" read -r launcher_id ignored; do
+            case "$launcher_id" in
+                *[!a-z0-9-]* | -* | *- | *--* | '') continue ;;
+            esac
+            launcher_path="$INSTALL_ROOT/$launcher_id.app"
+            if is_owned_bundle "$launcher_path" "dev.contextlauncher.context.$launcher_id"; then
+                rm -R "$launcher_path"
+            fi
+        done < "$IDS_PATH"
+    fi
+    rm -f "$CLI_PATH" "$CLI_HASH_PATH"
 fi
 
 if [ "$PURGE_DATA" = true ]; then
-    case "$CONTEXT_LAUNCHER_HOME" in
-        /|.) echo "Refusing to purge an unsafe support directory." >&2; exit 1 ;;
-    esac
-    if [ -d "$CONTEXT_LAUNCHER_HOME" ]; then
-        rm -R "$CONTEXT_LAUNCHER_HOME"
+    if ! is_owned_support_root; then
+        echo "Refusing to purge a non-owned or unsafe support directory." >&2
+        exit 1
     fi
+    rm -R "$CONTEXT_LAUNCHER_HOME"
 fi

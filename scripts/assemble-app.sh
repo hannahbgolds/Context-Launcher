@@ -34,7 +34,6 @@ APPLICATION_PARENT=$(dirname "$APPLICATION_PATH")
 mkdir -p "$APPLICATION_PARENT"
 STAGING_ROOT=$(mktemp -d "$APPLICATION_PARENT/.context-launcher-app.XXXXXX")
 STAGING_APPLICATION="$STAGING_ROOT/$APPLICATION_NAME"
-BACKUP_PATH=
 
 cleanup() {
     if [ -d "$STAGING_ROOT" ]; then
@@ -60,19 +59,9 @@ printf '%s\n' \
     '</plist>' > "$STAGING_APPLICATION/Contents/Info.plist"
 cp "$SOURCE_BINARY" "$STAGING_APPLICATION/Contents/MacOS/ContextLauncherApp"
 
-if [ -e "$APPLICATION_PATH" ]; then
-    BACKUP_PATH=$(mktemp -d "$APPLICATION_PARENT/.context-launcher-backup.XXXXXX")
-    rmdir "$BACKUP_PATH"
-    mv "$APPLICATION_PATH" "$BACKUP_PATH"
-fi
-
-if ! mv "$STAGING_APPLICATION" "$APPLICATION_PATH"; then
-    if [ -n "$BACKUP_PATH" ] && [ -e "$BACKUP_PATH" ]; then
-        mv "$BACKUP_PATH" "$APPLICATION_PATH"
-    fi
+if [ -e "$APPLICATION_PATH" ] || [ -L "$APPLICATION_PATH" ]; then
+    echo "Application destination already exists: $APPLICATION_PATH" >&2
     exit 1
 fi
 
-if [ -n "$BACKUP_PATH" ] && [ -e "$BACKUP_PATH" ]; then
-    rm -R "$BACKUP_PATH"
-fi
+mv "$STAGING_APPLICATION" "$APPLICATION_PATH"
