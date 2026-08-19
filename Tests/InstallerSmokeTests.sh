@@ -112,6 +112,37 @@ rmdir "$UNINSTALL_LOCKED/install/.context-launcher-install.lock"
 INSTALL_ROOT="$UNINSTALL_LOCKED/install" CONTEXT_LAUNCHER_HOME="$UNINSTALL_LOCKED/support" ./uninstall.sh
 test ! -e "$UNINSTALL_LOCKED/install/Context Launcher.app"
 
+SIGNALLED_UNINSTALL="$TEST_DIRECTORY/signalled-uninstall"
+mkdir -p "$SIGNALLED_UNINSTALL/fake-bin"
+install_redirected "$SIGNALLED_UNINSTALL"
+cat > "$SIGNALLED_UNINSTALL/fake-bin/rm" <<'EOF'
+#!/bin/sh
+case "$*" in
+    *'Context Launcher.app'*)
+        kill "-$UNINSTALL_TEST_SIGNAL" "$PPID"
+        exit 0
+        ;;
+esac
+exec /bin/rm "$@"
+EOF
+chmod +x "$SIGNALLED_UNINSTALL/fake-bin/rm"
+for signal_name in HUP INT TERM; do
+    test "$(UNINSTALL_TEST_SIGNAL="$signal_name" PATH="$SIGNALLED_UNINSTALL/fake-bin:$PATH" INSTALL_ROOT="$SIGNALLED_UNINSTALL/install" CONTEXT_LAUNCHER_HOME="$SIGNALLED_UNINSTALL/support" ./uninstall.sh >/dev/null 2>&1; echo $?)" != 0
+    test -e "$SIGNALLED_UNINSTALL/install/Context Launcher.app"
+    test -e "$SIGNALLED_UNINSTALL/install/New.app"
+    test -x "$SIGNALLED_UNINSTALL/support/bin/context"
+    test ! -e "$SIGNALLED_UNINSTALL/install/.context-launcher-install.lock"
+done
+
+ABSENT_INSTALL_ROOT="$TEST_DIRECTORY/absent-install-root"
+mkdir -p "$ABSENT_INSTALL_ROOT"
+install_redirected "$ABSENT_INSTALL_ROOT"
+mv "$ABSENT_INSTALL_ROOT/install" "$ABSENT_INSTALL_ROOT/former-install"
+test "$(INSTALL_ROOT="$ABSENT_INSTALL_ROOT/install" CONTEXT_LAUNCHER_HOME="$ABSENT_INSTALL_ROOT/support" ./uninstall.sh >/dev/null 2>&1; echo $?)" != 0
+test ! -e "$ABSENT_INSTALL_ROOT/install"
+test -e "$ABSENT_INSTALL_ROOT/former-install/Context Launcher.app"
+test -x "$ABSENT_INSTALL_ROOT/support/bin/context"
+
 EARLY_FAILURE="$TEST_DIRECTORY/early-failure"
 mkdir -p "$EARLY_FAILURE"
 test "$(CONTEXT_LAUNCHER_TEST_FAIL_EARLY=1 INSTALL_ROOT="$EARLY_FAILURE/install" CONTEXT_LAUNCHER_HOME="$EARLY_FAILURE/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0

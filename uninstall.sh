@@ -18,6 +18,10 @@ INSTALL_ROOT=${INSTALL_ROOT:-"$HOME/Applications"}
 CONTEXT_LAUNCHER_HOME=${CONTEXT_LAUNCHER_HOME:-"$HOME/Library/Application Support/ContextLauncher"}
 case "$INSTALL_ROOT" in /*) ;; *) echo "INSTALL_ROOT must be absolute." >&2; exit 64 ;; esac
 case "$CONTEXT_LAUNCHER_HOME" in /*) ;; *) echo "CONTEXT_LAUNCHER_HOME must be absolute." >&2; exit 64 ;; esac
+if [ ! -d "$INSTALL_ROOT" ]; then
+    echo "No Context Launcher install root exists at $INSTALL_ROOT." >&2
+    exit 1
+fi
 
 SUPPORT_WAS_SYMLINK=false
 if [ -L "$CONTEXT_LAUNCHER_HOME" ]; then
@@ -25,9 +29,7 @@ if [ -L "$CONTEXT_LAUNCHER_HOME" ]; then
 elif [ -d "$CONTEXT_LAUNCHER_HOME" ]; then
     CONTEXT_LAUNCHER_HOME=$(cd -P "$CONTEXT_LAUNCHER_HOME" && pwd)
 fi
-if [ -d "$INSTALL_ROOT" ]; then
-    INSTALL_ROOT=$(cd -P "$INSTALL_ROOT" && pwd)
-fi
+INSTALL_ROOT=$(cd -P "$INSTALL_ROOT" && pwd)
 
 INSTALL_LOCK_DIRECTORY="$INSTALL_ROOT/.context-launcher-install.lock"
 INSTALL_LOCK_HELD=false
@@ -40,14 +42,15 @@ cleanup() {
         rmdir "$INSTALL_LOCK_DIRECTORY" || :
     fi
 }
-if [ -d "$INSTALL_ROOT" ]; then
-    if ! mkdir "$INSTALL_LOCK_DIRECTORY"; then
-        echo "Another Context Launcher installation or uninstall is already running for $INSTALL_ROOT." >&2
-        exit 1
-    fi
-    INSTALL_LOCK_HELD=true
+if ! mkdir "$INSTALL_LOCK_DIRECTORY"; then
+    echo "Another Context Launcher installation or uninstall is already running for $INSTALL_ROOT." >&2
+    exit 1
 fi
-trap cleanup EXIT HUP INT TERM
+INSTALL_LOCK_HELD=true
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 SUPPORT_MARKER="$CONTEXT_LAUNCHER_HOME/.context-launcher-install"
 CLI_DIRECTORY="$CONTEXT_LAUNCHER_HOME/bin"
