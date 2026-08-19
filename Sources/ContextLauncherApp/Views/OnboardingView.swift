@@ -1,8 +1,11 @@
 import ContextLauncherKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct OnboardingView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var importsProjects = false
+    @State private var projectContextID: String?
 
     var body: some View {
         ScrollView {
@@ -15,11 +18,22 @@ struct OnboardingView: View {
                     starters
                     HStack {
                         Spacer()
-                        Button("Create Contexts and Launchers") {
-                            model.completeOnboarding()
+                        Button {
+                            Task { await model.completeOnboarding() }
+                        } label: {
+                            if model.isSynchronizingLaunchers {
+                                HStack {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Creating Launchers…")
+                                }
+                            } else {
+                                Text("Create Contexts and Launchers")
+                            }
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
+                        .disabled(model.isSynchronizingLaunchers)
                     }
                 }
             }
@@ -28,6 +42,18 @@ struct OnboardingView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Welcome")
+        .fileImporter(
+            isPresented: $importsProjects,
+            allowedContentTypes: [.folder, Self.workspaceType],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case let .success(urls):
+                addProjects(urls)
+            case let .failure(error):
+                model.presentError("Couldn’t select project", message: error.localizedDescription)
+            }
+        }
     }
 
     private var welcome: some View {
@@ -69,7 +95,7 @@ struct OnboardingView: View {
     private var starters: some View {
         GroupBox("Starter contexts") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Edit these generic templates now. You can add URLs, projects, and applications after setup.")
+                Text("Edit these generic templates, assign Chrome profiles, and add local project folders or .code-workspace files.")
                     .foregroundStyle(.secondary)
 
                 ForEach($model.starterContexts) { $context in
@@ -97,6 +123,54 @@ struct OnboardingView: View {
                                     }
                                 }
                                 .labelsHidden()
+                            }
+                            GridRow(alignment: .top) {
+                                Text("Projects")
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(context.vscodeProjects.indices, id: \.self) { index in
+                                        HStack {
+                                            Text(context.vscodeProjects[index].path)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                            Spacer()
+                                            Button {
+                                                context.vscodeProjects.move(
+                                                    fromOffsets: IndexSet(integer: index),
+                                                    toOffset: index - 1
+                                                )
+                                            } label: {
+                                                Image(systemName: "chevron.up")
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .disabled(index == 0)
+                                            .help("Move project up")
+
+                                            Button {
+                                                context.vscodeProjects.move(
+                                                    fromOffsets: IndexSet(integer: index),
+                                                    toOffset: index + 2
+                                                )
+                                            } label: {
+                                                Image(systemName: "chevron.down")
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .disabled(index == context.vscodeProjects.count - 1)
+                                            .help("Move project down")
+
+                                            Button(role: .destructive) {
+                                                context.vscodeProjects.remove(at: index)
+                                            } label: {
+                                                Image(systemName: "minus.circle")
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .help("Remove project")
+                                        }
+                                    }
+                                    Button("Add Folder or Workspace…") {
+                                        projectContextID = context.id
+                                        importsProjects = true
+                                    }
+                                }
                             }
                         }
                         .padding(.top, 8)
@@ -166,4 +240,14 @@ struct OnboardingView: View {
             set: { context.wrappedValue.chromeProfileID = $0.isEmpty ? nil : $0 }
         )
     }
+
+    private func addProjects(_ urls: [URL]) {
+        guard let projectContextID,
+              let index = model.starterContexts.firstIndex(where: { $0.id == projectContextID }) else { return }
+        for url in urls where !model.starterContexts[index].vscodeProjects.contains(url) {
+            model.starterContexts[index].vscodeProjects.append(url)
+        }
+    }
+
+    private static let workspaceType = UTType(filenameExtension: "code-workspace") ?? .data
 }

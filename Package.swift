@@ -13,6 +13,6 @@ let package = Package(
         .target(name: "ContextLauncherKit"),
         .executableTarget(name: "ContextLauncherApp", dependencies: ["ContextLauncherKit"]),
         .executableTarget(name: "context", dependencies: ["ContextLauncherKit"]),
-        .testTarget(name: "ContextLauncherKitTests", dependencies: ["ContextLauncherKit"])
+        .testTarget(name: "ContextLauncherKitTests", dependencies: ["ContextLauncherKit", "ContextLauncherApp"])
     ]
 )

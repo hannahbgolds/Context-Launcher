@@ -15,8 +15,11 @@ struct DiagnosticsView: View {
                 }
                 Spacer()
                 Button("Refresh") { model.refreshDiagnostics() }
-                Button("Synchronize Launchers") { model.synchronizeLaunchers() }
+                Button("Synchronize Launchers") {
+                    Task { await model.synchronizeLaunchers() }
+                }
                     .buttonStyle(.borderedProminent)
+                    .disabled(model.isSynchronizingLaunchers)
             }
 
             Table(rows) {

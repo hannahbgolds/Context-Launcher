@@ -8,6 +8,8 @@ struct AppAlert: Identifiable {
     let message: String
 }
 
+typealias LauncherSyncOperation = @Sendable ([LauncherContext], Bool) throws -> Void
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var contexts: [LauncherContext] = []
@@ -21,26 +23,33 @@ final class AppModel: ObservableObject {
     @Published var showsOnboardingCompletion = false
     @Published var alert: AppAlert?
     @Published private(set) var editorSessionID = UUID()
+    @Published private(set) var configurationLoadError: String?
+    @Published private(set) var isSynchronizingLaunchers = false
 
     private let supportDirectory: URL
     private let launcherDirectory: URL
     private let cliURL: URL
     private let store: ContextStore
-    private let generator = LauncherBundleGenerator()
+    private let launcherSync: LauncherSyncOperation
     private var originalContextID: String?
-    private var loadFailed = false
+    private var onboardingIsActive = false
 
     var needsOnboarding: Bool {
-        !loadFailed && OnboardingState.needsOnboarding(contexts: contexts)
+        allowsStorageMutations && onboardingIsActive
+    }
+
+    var allowsStorageMutations: Bool {
+        configurationLoadError == nil
     }
 
     var canDeleteDraft: Bool {
-        originalContextID != nil
+        originalContextID != nil && allowsStorageMutations && !isSynchronizingLaunchers
     }
 
     init(
         arguments: [String] = Array(CommandLine.arguments.dropFirst()),
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        launcherSync: LauncherSyncOperation? = nil
     ) {
         supportDirectory = environment["CONTEXT_LAUNCHER_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -49,6 +58,17 @@ final class AppModel: ObservableObject {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
         cliURL = supportDirectory.appendingPathComponent("bin/context")
         store = ContextStore(fileURL: supportDirectory.appendingPathComponent("contexts.json"))
+        let cliURL = self.cliURL
+        let launcherDirectory = self.launcherDirectory
+        self.launcherSync = launcherSync ?? { contexts, includingNew in
+            let generator = LauncherBundleGenerator()
+            for context in contexts {
+                try generator.generate(for: context, cliURL: cliURL, in: launcherDirectory)
+            }
+            if includingNew {
+                try generator.generateNewLauncher(cliURL: cliURL, in: launcherDirectory)
+            }
+        }
 
         load(arguments: arguments)
     }
@@ -98,7 +118,8 @@ final class AppModel: ObservableObject {
         refreshDiagnostics()
     }
 
-    func save(_ context: LauncherContext) {
+    func save(_ context: LauncherContext) async {
+        guard requireStorageAccess(), requireIdleLauncherSync() else { return }
         var updated = contexts
         let previousID = originalContextID
         if let previousID {
@@ -118,11 +139,13 @@ final class AppModel: ObservableObject {
             return
         }
 
+        isSynchronizingLaunchers = true
+        defer { isSynchronizingLaunchers = false }
         do {
             if let previousID, previousID != context.id {
-                try generator.remove(id: previousID, from: launcherDirectory)
+                try LauncherBundleGenerator().remove(id: previousID, from: launcherDirectory)
             }
-            try generateLaunchers(for: [context], includingNew: true)
+            try await runLauncherSync(for: [context], includingNew: true)
             refreshDiagnostics()
             alert = AppAlert(title: "Context saved", message: "The \(context.name) launcher is ready for Spotlight.")
         } catch {
@@ -132,6 +155,7 @@ final class AppModel: ObservableObject {
     }
 
     func deleteDraft() {
+        guard requireStorageAccess(), requireIdleLauncherSync() else { return }
         guard let id = originalContextID else { return }
         do {
             try store.delete(id: id)
@@ -149,7 +173,7 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            try generator.remove(id: id, from: launcherDirectory)
+            try LauncherBundleGenerator().remove(id: id, from: launcherDirectory)
             refreshDiagnostics()
         } catch {
             refreshDiagnostics()
@@ -172,16 +196,27 @@ final class AppModel: ObservableObject {
         )
     }
 
-    func completeOnboarding() {
+    func completeOnboarding() async {
+        guard requireStorageAccess(), requireIdleLauncherSync() else { return }
         do {
             try store.save(starterContexts)
             contexts = try store.load()
-            showsOnboardingCompletion = true
-            try generateLaunchers(for: contexts, includingNew: true)
-            refreshDiagnostics()
         } catch {
             reloadAfterPartialWrite()
-            present(error, title: contexts.isEmpty ? "Couldn’t finish setup" : "Contexts saved, but launchers need attention")
+            present(error, title: "Couldn’t finish setup")
+            return
+        }
+
+        isSynchronizingLaunchers = true
+        defer { isSynchronizingLaunchers = false }
+        do {
+            try await runLauncherSync(for: contexts, includingNew: true)
+            onboardingIsActive = false
+            showsOnboardingCompletion = true
+            refreshDiagnostics()
+        } catch {
+            refreshDiagnostics()
+            present(error, title: "Setup is saved, but launcher creation failed")
         }
     }
 
@@ -192,9 +227,12 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func synchronizeLaunchers() {
+    func synchronizeLaunchers() async {
+        guard requireIdleLauncherSync() else { return }
+        isSynchronizingLaunchers = true
+        defer { isSynchronizingLaunchers = false }
         do {
-            try generateLaunchers(for: contexts, includingNew: true)
+            try await runLauncherSync(for: contexts, includingNew: true)
             refreshDiagnostics()
             alert = AppAlert(title: "Launchers synchronized", message: "Your Spotlight launchers are up to date.")
         } catch {
@@ -213,7 +251,23 @@ final class AppModel: ObservableObject {
         )
     }
 
+    func retryConfigurationLoad() {
+        do {
+            contexts = try store.load()
+            configurationLoadError = nil
+            onboardingIsActive = OnboardingState.needsOnboarding(contexts: contexts)
+            refreshDiagnostics()
+            if let first = contexts.first {
+                beginEditing(id: first.id)
+            }
+        } catch {
+            configurationLoadError = error.localizedDescription
+            present(error, title: "Configuration is still unreadable")
+        }
+    }
+
     func importIcon(from source: URL) -> String? {
+        guard requireStorageAccess() else { return nil }
         let accessed = source.startAccessingSecurityScopedResource()
         defer { if accessed { source.stopAccessingSecurityScopedResource() } }
         do {
@@ -236,8 +290,9 @@ final class AppModel: ObservableObject {
     private func load(arguments: [String]) {
         do {
             contexts = try store.load()
+            onboardingIsActive = OnboardingState.needsOnboarding(contexts: contexts)
         } catch {
-            loadFailed = true
+            configurationLoadError = error.localizedDescription
             present(error, title: "Couldn’t load contexts")
         }
 
@@ -261,21 +316,39 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func generateLaunchers(for contexts: [LauncherContext], includingNew: Bool) throws {
-        for context in contexts {
-            try generator.generate(for: context, cliURL: cliURL, in: launcherDirectory)
-        }
-        if includingNew {
-            try generator.generateNewLauncher(cliURL: cliURL, in: launcherDirectory)
-        }
+    private func runLauncherSync(for contexts: [LauncherContext], includingNew: Bool) async throws {
+        let launcherSync = launcherSync
+        try await Task.detached(priority: .userInitiated) {
+            try launcherSync(contexts, includingNew)
+        }.value
     }
 
     private func reloadAfterPartialWrite() {
-        if let loaded = try? store.load() {
-            contexts = loaded
-            loadFailed = false
+        do {
+            contexts = try store.load()
+        } catch {
+            configurationLoadError = error.localizedDescription
         }
         refreshDiagnostics()
+    }
+
+    private func requireStorageAccess() -> Bool {
+        guard allowsStorageMutations else {
+            presentError(
+                "Configuration is read-only",
+                message: "Context Launcher could not load contexts.json. Fix or restore the file, then choose Retry Load before saving changes."
+            )
+            return false
+        }
+        return true
+    }
+
+    private func requireIdleLauncherSync() -> Bool {
+        guard !isSynchronizingLaunchers else {
+            presentError("Launcher update in progress", message: "Wait for the current launcher update to finish.")
+            return false
+        }
+        return true
     }
 
     private func presentValidation(_ issues: [ValidationIssue]) {

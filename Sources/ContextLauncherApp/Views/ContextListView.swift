@@ -24,6 +24,7 @@ struct ContextListView: View {
                         Label("New Context", systemImage: "plus")
                     }
                     .help("Create a context")
+                    .disabled(!model.allowsStorageMutations || model.needsOnboarding || model.isSynchronizingLaunchers)
 
                     Button {
                         model.showDiagnostics()
@@ -52,7 +53,9 @@ struct ContextListView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if model.showsOnboardingCompletion || model.needsOnboarding {
+        if !model.allowsStorageMutations {
+            ConfigurationRecoveryView()
+        } else if model.showsOnboardingCompletion || model.needsOnboarding {
             OnboardingView()
         } else if model.showsDiagnostics {
             DiagnosticsView()
@@ -73,6 +76,36 @@ struct ContextListView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+private struct ConfigurationRecoveryView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 44))
+                .foregroundStyle(.orange)
+            Text("Configuration needs recovery")
+                .font(.title.bold())
+            Text("Context Launcher could not read contexts.json, so saving and deleting are disabled to protect the existing file.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 520)
+            if let error = model.configurationLoadError {
+                Text(error)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            }
+            Text("Fix or restore contexts.json, then retry loading it.")
+                .foregroundStyle(.secondary)
+            Button("Retry Load") { model.retryConfigurationLoad() }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding(32)
     }
 }
 

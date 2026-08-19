@@ -120,9 +120,13 @@ struct ContextEditorView: View {
     private var chromeSection: some View {
         Section("Chrome") {
             Toggle("Open a Chrome profile", isOn: chromeEnabled)
+                .disabled(model.chromeProfiles.isEmpty)
             if context.chromeProfileID != nil {
                 Picker("Profile", selection: chromeProfileID) {
-                    Text("Choose a profile").tag("")
+                    if let configured = context.chromeProfileID,
+                       !model.chromeProfiles.contains(where: { $0.directoryID == configured }) {
+                        Text("Unavailable — \(configured)").tag(configured)
+                    }
                     ForEach(model.chromeProfiles, id: \.directoryID) { profile in
                         Text(profile.email.map { "\(profile.name) — \($0)" } ?? profile.name)
                             .tag(profile.directoryID)
@@ -132,7 +136,14 @@ struct ContextEditorView: View {
                     Text("No Chrome profiles were discovered. Diagnostics can help locate Chrome metadata.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Button("Remove unavailable Chrome profile") {
+                        context.chromeProfileID = nil
+                    }
                 }
+            } else if model.chromeProfiles.isEmpty {
+                Text("Chrome can be enabled after a profile is discovered.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -233,10 +244,13 @@ struct ContextEditorView: View {
                 if let prepared = preparedContext() { model.testLaunch(prepared) }
             }
             Button("Save") {
-                if let prepared = preparedContext() { model.save(prepared) }
+                if let prepared = preparedContext() {
+                    Task { await model.save(prepared) }
+                }
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
+            .disabled(!model.allowsStorageMutations || model.isSynchronizingLaunchers)
         }
     }
 
@@ -254,7 +268,7 @@ struct ContextEditorView: View {
         Binding(
             get: { context.chromeProfileID != nil },
             set: { enabled in
-                context.chromeProfileID = enabled ? (model.chromeProfiles.first?.directoryID ?? "") : nil
+                context.chromeProfileID = enabled ? model.chromeProfiles.first?.directoryID : nil
             }
         )
     }
@@ -267,6 +281,14 @@ struct ContextEditorView: View {
     }
 
     private func preparedContext() -> LauncherContext? {
+        if let profileID = context.chromeProfileID,
+           !model.chromeProfiles.contains(where: { $0.directoryID == profileID }) {
+            model.presentError(
+                "Choose a Chrome profile",
+                message: "Select a discovered Chrome profile or turn off Chrome before saving or testing this context."
+            )
+            return nil
+        }
         let values = urlRows
             .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
