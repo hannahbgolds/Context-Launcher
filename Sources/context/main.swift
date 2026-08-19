@@ -104,6 +104,19 @@ private func run(_ arguments: [String], runtime: Runtime) throws -> Int32 {
             try generator.generate(for: context, cliURL: runtime.cliURL, in: runtime.installRoot)
         }
         try generator.generateNewLauncher(cliURL: runtime.cliURL, in: runtime.installRoot)
+    case ["internal-owned-icons"]:
+        let iconsDirectory = runtime.supportDirectory.appendingPathComponent("icons", isDirectory: true).standardizedFileURL
+        let names = Set(try runtime.store.load().compactMap { context -> String? in
+            guard case let .custom(path) = context.icon else { return nil }
+            let iconURL = URL(fileURLWithPath: path).standardizedFileURL
+            guard iconURL.deletingLastPathComponent() == iconsDirectory else { return nil }
+            let name = iconURL.lastPathComponent
+            guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else { return nil }
+            return name
+        })
+        for name in names.sorted() {
+            print(name)
+        }
     default:
         usage()
         return 1

@@ -54,13 +54,20 @@ mkdir -p "$PURGE"
 install_redirected "$PURGE"
 printf '%s\n' 'unknown sibling' > "$PURGE/support/keep.txt"
 mkdir -p "$PURGE/support/icons"
-printf '%s\n' 'product icon' > "$PURGE/support/icons/product-icon.txt"
+printf '%s\n' 'owned icon' > "$PURGE/support/icons/owned-icon.png"
+printf '%s\n' 'icon keep' > "$PURGE/support/icons/keep.txt"
+printf '%s\n' 'bin keep' > "$PURGE/support/bin/keep.txt"
+printf '%s\n' \
+    '{"contexts":[{"applications":[],"icon":{"custom":{"_0":"'"$PURGE/support/icons/owned-icon.png"'"}},"id":"owned","name":"Owned","subtitle":"","urls":[],"vscodeProjects":[]}],"version":1}' \
+    > "$PURGE/support/contexts.json"
 INSTALL_ROOT="$PURGE/install" CONTEXT_LAUNCHER_HOME="$PURGE/support" ./uninstall.sh --purge-data
 test -d "$PURGE/support"
 test "$(cat "$PURGE/support/keep.txt")" = 'unknown sibling'
 test ! -e "$PURGE/support/contexts.json"
-test ! -e "$PURGE/support/icons"
-test ! -e "$PURGE/support/bin"
+test ! -e "$PURGE/support/icons/owned-icon.png"
+test "$(cat "$PURGE/support/icons/keep.txt")" = 'icon keep'
+test ! -e "$PURGE/support/bin/context"
+test "$(cat "$PURGE/support/bin/keep.txt")" = 'bin keep'
 test ! -e "$PURGE/support/.context-launcher-install"
 
 EMPTY_PURGE="$TEST_DIRECTORY/empty-purge"
@@ -94,6 +101,16 @@ INSTALL_LOCKED="$TEST_DIRECTORY/install-locked"
 mkdir -p "$INSTALL_LOCKED/install/.context-launcher-install.lock"
 test "$(INSTALL_ROOT="$INSTALL_LOCKED/install" CONTEXT_LAUNCHER_HOME="$INSTALL_LOCKED/other-support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
 test ! -e "$INSTALL_LOCKED/install/Context Launcher.app"
+
+UNINSTALL_LOCKED="$TEST_DIRECTORY/uninstall-locked"
+mkdir -p "$UNINSTALL_LOCKED"
+install_redirected "$UNINSTALL_LOCKED"
+mkdir "$UNINSTALL_LOCKED/install/.context-launcher-install.lock"
+test "$(INSTALL_ROOT="$UNINSTALL_LOCKED/install" CONTEXT_LAUNCHER_HOME="$UNINSTALL_LOCKED/support" ./uninstall.sh >/dev/null 2>&1; echo $?)" != 0
+test -e "$UNINSTALL_LOCKED/install/Context Launcher.app"
+rmdir "$UNINSTALL_LOCKED/install/.context-launcher-install.lock"
+INSTALL_ROOT="$UNINSTALL_LOCKED/install" CONTEXT_LAUNCHER_HOME="$UNINSTALL_LOCKED/support" ./uninstall.sh
+test ! -e "$UNINSTALL_LOCKED/install/Context Launcher.app"
 
 EARLY_FAILURE="$TEST_DIRECTORY/early-failure"
 mkdir -p "$EARLY_FAILURE"

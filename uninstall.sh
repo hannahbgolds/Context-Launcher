@@ -29,6 +29,26 @@ if [ -d "$INSTALL_ROOT" ]; then
     INSTALL_ROOT=$(cd -P "$INSTALL_ROOT" && pwd)
 fi
 
+INSTALL_LOCK_DIRECTORY="$INSTALL_ROOT/.context-launcher-install.lock"
+INSTALL_LOCK_HELD=false
+IDS_PATH=
+ICONS_PATH=
+cleanup() {
+    if [ -n "$IDS_PATH" ] && [ -e "$IDS_PATH" ]; then rm -f "$IDS_PATH" || :; fi
+    if [ -n "$ICONS_PATH" ] && [ -e "$ICONS_PATH" ]; then rm -f "$ICONS_PATH" || :; fi
+    if [ "$INSTALL_LOCK_HELD" = true ] && [ -d "$INSTALL_LOCK_DIRECTORY" ]; then
+        rmdir "$INSTALL_LOCK_DIRECTORY" || :
+    fi
+}
+if [ -d "$INSTALL_ROOT" ]; then
+    if ! mkdir "$INSTALL_LOCK_DIRECTORY"; then
+        echo "Another Context Launcher installation or uninstall is already running for $INSTALL_ROOT." >&2
+        exit 1
+    fi
+    INSTALL_LOCK_HELD=true
+fi
+trap cleanup EXIT HUP INT TERM
+
 SUPPORT_MARKER="$CONTEXT_LAUNCHER_HOME/.context-launcher-install"
 CLI_DIRECTORY="$CONTEXT_LAUNCHER_HOME/bin"
 CLI_PATH="$CLI_DIRECTORY/context"
@@ -82,7 +102,7 @@ fi
 
 if [ "$CLI_OWNED" = true ]; then
     IDS_PATH=$(mktemp "${TMPDIR:-/tmp}/context-launcher-uninstall.XXXXXX")
-    trap 'rm -f "$IDS_PATH"' EXIT HUP INT TERM
+    ICONS_PATH=$(mktemp "${TMPDIR:-/tmp}/context-launcher-icons.XXXXXX")
     if CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" "$CLI_PATH" list > "$IDS_PATH"; then
         TAB=$(printf '\t')
         while IFS="$TAB" read -r launcher_id ignored; do
@@ -95,6 +115,7 @@ if [ "$CLI_OWNED" = true ]; then
             fi
         done < "$IDS_PATH"
     fi
+    CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" "$CLI_PATH" internal-owned-icons > "$ICONS_PATH" || :
     rm -f "$CLI_PATH" "$CLI_HASH_PATH"
 fi
 
@@ -109,8 +130,19 @@ if [ "$PURGE_DATA" = true ]; then
     fi
     if [ -f "$CONTEXTS_PATH" ] && [ ! -L "$CONTEXTS_PATH" ]; then rm -f "$CONTEXTS_PATH"; fi
     if [ -f "$SETUP_PENDING_PATH" ] && [ ! -L "$SETUP_PENDING_PATH" ]; then rm -f "$SETUP_PENDING_PATH"; fi
-    if [ -d "$ICONS_DIRECTORY" ] && [ ! -L "$ICONS_DIRECTORY" ]; then rm -R "$ICONS_DIRECTORY"; fi
-    if [ "$CLI_OWNED" = true ] && [ -d "$CLI_DIRECTORY" ] && [ ! -L "$CLI_DIRECTORY" ]; then rm -R "$CLI_DIRECTORY"; fi
+    if [ -d "$ICONS_DIRECTORY" ] && [ ! -L "$ICONS_DIRECTORY" ] && [ -n "$ICONS_PATH" ]; then
+        while IFS= read -r icon_name; do
+            case "$icon_name" in
+                ''|.|..|*/*|*..*|*[!A-Za-z0-9._-]*) continue ;;
+            esac
+            icon_path="$ICONS_DIRECTORY/$icon_name"
+            if [ -f "$icon_path" ] && [ ! -L "$icon_path" ]; then rm -f "$icon_path"; fi
+        done < "$ICONS_PATH"
+        rmdir "$ICONS_DIRECTORY" 2>/dev/null || :
+    fi
+    if [ "$CLI_OWNED" = true ] && [ -d "$CLI_DIRECTORY" ] && [ ! -L "$CLI_DIRECTORY" ]; then
+        rmdir "$CLI_DIRECTORY" 2>/dev/null || :
+    fi
     if [ -f "$SUPPORT_MARKER" ] && [ ! -L "$SUPPORT_MARKER" ]; then rm -f "$SUPPORT_MARKER"; fi
     rmdir "$CONTEXT_LAUNCHER_HOME" 2>/dev/null || :
 fi
