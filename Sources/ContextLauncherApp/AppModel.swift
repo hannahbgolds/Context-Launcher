@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     private let supportDirectory: URL
     private let launcherDirectory: URL
     private let cliURL: URL
+    private let setupPendingURL: URL
     private let store: ContextStore
     private let launcherSync: LauncherSyncOperation
     private var originalContextID: String?
@@ -57,6 +58,7 @@ final class AppModel: ObservableObject {
         launcherDirectory = environment["INSTALL_ROOT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
         cliURL = supportDirectory.appendingPathComponent("bin/context")
+        setupPendingURL = supportDirectory.appendingPathComponent("setup-pending")
         store = ContextStore(fileURL: supportDirectory.appendingPathComponent("contexts.json"))
         let cliURL = self.cliURL
         let launcherDirectory = self.launcherDirectory
@@ -199,6 +201,7 @@ final class AppModel: ObservableObject {
     func completeOnboarding() async {
         guard requireStorageAccess(), requireIdleLauncherSync() else { return }
         do {
+            try markSetupPending()
             try store.save(starterContexts)
             contexts = try store.load()
         } catch {
@@ -211,6 +214,7 @@ final class AppModel: ObservableObject {
         defer { isSynchronizingLaunchers = false }
         do {
             try await runLauncherSync(for: contexts, includingNew: true)
+            try clearSetupPending()
             onboardingIsActive = false
             showsOnboardingCompletion = true
             refreshDiagnostics()
@@ -255,7 +259,7 @@ final class AppModel: ObservableObject {
         do {
             contexts = try store.load()
             configurationLoadError = nil
-            onboardingIsActive = OnboardingState.needsOnboarding(contexts: contexts)
+            restoreOnboardingState()
             refreshDiagnostics()
             if let first = contexts.first {
                 beginEditing(id: first.id)
@@ -290,7 +294,7 @@ final class AppModel: ObservableObject {
     private func load(arguments: [String]) {
         do {
             contexts = try store.load()
-            onboardingIsActive = OnboardingState.needsOnboarding(contexts: contexts)
+            restoreOnboardingState()
         } catch {
             configurationLoadError = error.localizedDescription
             present(error, title: "Couldn’t load contexts")
@@ -330,6 +334,25 @@ final class AppModel: ObservableObject {
             configurationLoadError = error.localizedDescription
         }
         refreshDiagnostics()
+    }
+
+    private func restoreOnboardingState() {
+        let setupPending = FileManager.default.fileExists(atPath: setupPendingURL.path)
+        onboardingIsActive = OnboardingState.needsOnboarding(contexts: contexts, setupPending: setupPending)
+        if setupPending, !contexts.isEmpty {
+            starterContexts = contexts
+        }
+    }
+
+    private func markSetupPending() throws {
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        try Data().write(to: setupPendingURL, options: .atomic)
+    }
+
+    private func clearSetupPending() throws {
+        if FileManager.default.fileExists(atPath: setupPendingURL.path) {
+            try FileManager.default.removeItem(at: setupPendingURL)
+        }
     }
 
     private func requireStorageAccess() -> Bool {

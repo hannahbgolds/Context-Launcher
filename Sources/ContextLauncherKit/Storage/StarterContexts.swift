@@ -10,7 +10,7 @@ public enum StarterContexts {
 }
 
 public enum OnboardingState {
-    public static func needsOnboarding(contexts: [LauncherContext]) -> Bool {
-        contexts.isEmpty
+    public static func needsOnboarding(contexts: [LauncherContext], setupPending: Bool = false) -> Bool {
+        setupPending || contexts.isEmpty
     }
 }

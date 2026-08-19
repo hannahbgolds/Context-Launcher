@@ -21,12 +21,13 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fixture.contextsURL), original)
     }
 
-    func testFailedLauncherSyncKeepsOnboardingActiveAndCompletionHidden() async throws {
+    func testPendingSetupSurvivesRestartUntilSuccessfulLauncherRetry() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let model = AppModel(arguments: [], environment: fixture.environment) { _, _ in
             throw ExpectedFailure()
         }
+        model.starterContexts[0].name = "Customized Uni"
 
         XCTAssertTrue(model.needsOnboarding)
 
@@ -35,6 +36,22 @@ final class AppModelTests: XCTestCase {
         XCTAssertTrue(model.needsOnboarding)
         XCTAssertFalse(model.showsOnboardingCompletion)
         XCTAssertFalse(model.isSynchronizingLaunchers)
+        XCTAssertEqual(try Data(contentsOf: fixture.setupPendingURL), Data())
+
+        let resumed = AppModel(arguments: [], environment: fixture.environment) { _, _ in }
+        XCTAssertTrue(resumed.needsOnboarding)
+        XCTAssertFalse(resumed.showsOnboardingCompletion)
+        XCTAssertEqual(resumed.starterContexts.first(where: { $0.id == "uni" })?.name, "Customized Uni")
+
+        await resumed.completeOnboarding()
+
+        XCTAssertFalse(resumed.needsOnboarding)
+        XCTAssertTrue(resumed.showsOnboardingCompletion)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.setupPendingURL.path))
+
+        let finished = AppModel(arguments: [], environment: fixture.environment) { _, _ in }
+        XCTAssertFalse(finished.needsOnboarding)
+        XCTAssertFalse(finished.showsOnboardingCompletion)
     }
 }
 
@@ -52,6 +69,10 @@ private struct Fixture {
 
     var contextsURL: URL {
         directory.appendingPathComponent("support/contexts.json")
+    }
+
+    var setupPendingURL: URL {
+        directory.appendingPathComponent("support/setup-pending")
     }
 
     var environment: [String: String] {
