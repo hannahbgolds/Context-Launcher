@@ -16,7 +16,7 @@ final class DiscoveryTests: XCTestCase {
     }
 
     func testParsesHumanReadableChromeProfiles() throws {
-        let json = #"{"profile":{"info_cache":{"Default":{"name":"Hannah Personal","user_name":"person@example.test"},"Profile 2":{"name":"Vertalis"}}}}"#.data(using: .utf8)!
+        let json = #"{"profile":{"info_cache":{"Default":{"name":"Personal","user_name":"person@example.test"},"Profile 2":{"name":"Work"}}}}"#.data(using: .utf8)!
 
         let profiles = try ChromeProfileDiscovery.parse(localStateData: json)
 

@@ -86,6 +86,7 @@ The installed CLI is at:
 Use its full path, or add that `bin` directory to your shell `PATH`:
 
 ```sh
+export PATH="$HOME/Library/Application Support/ContextLauncher/bin:$PATH"
 context list
 context launch <id>
 context new

@@ -60,9 +60,10 @@ final class ContextStoreTests: XCTestCase {
     func testStarterContextsContainNoPersonalValues() throws {
         let data = try JSONEncoder().encode(StarterContexts.all)
         let text = String(decoding: data, as: UTF8.self)
+        let userDirectoryPrefix = "/" + "Users/"
 
         XCTAssertFalse(text.contains("@"))
-        XCTAssertFalse(text.contains("/Users/"))
+        XCTAssertFalse(text.contains(userDirectoryPrefix))
         XCTAssertEqual(Set(StarterContexts.all.map(\.id)), ["uni", "leet", "work", "org"])
     }
 }
