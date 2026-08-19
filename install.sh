@@ -42,8 +42,18 @@ if ! mkdir "$LOCK_DIRECTORY"; then
     echo "Another Context Launcher installation is already running." >&2
     exit 1
 fi
+INSTALL_LOCK_DIRECTORY="$INSTALL_ROOT/.context-launcher-install.lock"
+if ! mkdir "$INSTALL_LOCK_DIRECTORY"; then
+    rmdir "$LOCK_DIRECTORY" || :
+    echo "Another Context Launcher installation is already running for $INSTALL_ROOT." >&2
+    exit 1
+fi
 
-WORK_DIRECTORY=$(mktemp -d "$CONTEXT_LAUNCHER_HOME/.context-launcher-transaction.XXXXXX")
+if ! WORK_DIRECTORY=$(mktemp -d "$CONTEXT_LAUNCHER_HOME/.context-launcher-transaction.XXXXXX"); then
+    rmdir "$INSTALL_LOCK_DIRECTORY" || :
+    rmdir "$LOCK_DIRECTORY" || :
+    exit 1
+fi
 COMMITTED=false
 APPLICATION_TOUCHED=false
 CLI_TOUCHED=false
@@ -75,14 +85,16 @@ restore_bundle() {
 }
 
 rollback() {
-    if [ "$LAUNCHERS_GENERATED" = true ]; then
+    if [ "$LAUNCHERS_GENERATED" = true ] && [ -f "$IDS_PATH" ]; then
         while IFS= read -r launcher_id; do
             remove_bundle "$INSTALL_ROOT/$launcher_id.app"
         done < "$IDS_PATH"
     fi
-    while IFS= read -r launcher_id; do
-        restore_bundle "$BACKUP_DIRECTORY/launchers/$launcher_id.app" "$INSTALL_ROOT/$launcher_id.app"
-    done < "$IDS_PATH"
+    if [ -f "$IDS_PATH" ]; then
+        while IFS= read -r launcher_id; do
+            restore_bundle "$BACKUP_DIRECTORY/launchers/$launcher_id.app" "$INSTALL_ROOT/$launcher_id.app"
+        done < "$IDS_PATH"
+    fi
     if [ "$CLI_HASH_TOUCHED" = true ]; then remove_file "$CLI_HASH_PATH"; fi
     if [ "$CLI_TOUCHED" = true ]; then remove_file "$CLI_PATH"; fi
     if [ "$APPLICATION_TOUCHED" = true ]; then remove_bundle "$APPLICATION_PATH"; fi
@@ -93,10 +105,19 @@ rollback() {
 
 cleanup() {
     if [ "$COMMITTED" != true ]; then rollback; fi
-    if [ -d "$WORK_DIRECTORY" ]; then rm -R "$WORK_DIRECTORY"; fi
+    if [ -d "$WORK_DIRECTORY" ]; then rm -R "$WORK_DIRECTORY" || :; fi
+    if [ -d "$INSTALL_LOCK_DIRECTORY" ]; then rmdir "$INSTALL_LOCK_DIRECTORY" || :; fi
     if [ -d "$LOCK_DIRECTORY" ]; then rmdir "$LOCK_DIRECTORY" || :; fi
 }
 trap cleanup EXIT HUP INT TERM
+
+mkdir -p "$BACKUP_DIRECTORY/launchers"
+: > "$IDS_PATH"
+
+if [ "${CONTEXT_LAUNCHER_TEST_FAIL_EARLY:-}" = 1 ]; then
+    echo "Forced early installation failure." >&2
+    exit 1
+fi
 
 if [ "$SKIP_BUILD" = false ]; then
     (cd "$SCRIPT_DIRECTORY" && swift build -c release)
@@ -112,7 +133,7 @@ if [ -e "$CLI_DIRECTORY" ] && [ -L "$CLI_DIRECTORY" ]; then
     echo "Context Launcher bin directory must not be a symlink." >&2
     exit 1
 fi
-mkdir -p "$CLI_DIRECTORY" "$BACKUP_DIRECTORY/launchers"
+mkdir -p "$CLI_DIRECTORY"
 
 CONTEXTS_PATH="$CONTEXT_LAUNCHER_HOME/contexts.json"
 if [ ! -e "$CONTEXTS_PATH" ]; then

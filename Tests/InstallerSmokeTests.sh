@@ -52,8 +52,22 @@ test -f "$OWNED/support/contexts.json"
 PURGE="$TEST_DIRECTORY/purge"
 mkdir -p "$PURGE"
 install_redirected "$PURGE"
+printf '%s\n' 'unknown sibling' > "$PURGE/support/keep.txt"
+mkdir -p "$PURGE/support/icons"
+printf '%s\n' 'product icon' > "$PURGE/support/icons/product-icon.txt"
 INSTALL_ROOT="$PURGE/install" CONTEXT_LAUNCHER_HOME="$PURGE/support" ./uninstall.sh --purge-data
-test ! -e "$PURGE/support"
+test -d "$PURGE/support"
+test "$(cat "$PURGE/support/keep.txt")" = 'unknown sibling'
+test ! -e "$PURGE/support/contexts.json"
+test ! -e "$PURGE/support/icons"
+test ! -e "$PURGE/support/bin"
+test ! -e "$PURGE/support/.context-launcher-install"
+
+EMPTY_PURGE="$TEST_DIRECTORY/empty-purge"
+mkdir -p "$EMPTY_PURGE"
+install_redirected "$EMPTY_PURGE"
+INSTALL_ROOT="$EMPTY_PURGE/install" CONTEXT_LAUNCHER_HOME="$EMPTY_PURGE/support" ./uninstall.sh --purge-data
+test ! -e "$EMPTY_PURGE/support"
 
 BROAD_HOME="$TEST_DIRECTORY/home-like"
 mkdir -p "$BROAD_HOME"
@@ -75,6 +89,17 @@ LOCKED="$TEST_DIRECTORY/locked"
 mkdir -p "$LOCKED/support/.context-launcher-install.lock"
 test "$(INSTALL_ROOT="$LOCKED/install" CONTEXT_LAUNCHER_HOME="$LOCKED/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
 test ! -e "$LOCKED/install/Context Launcher.app"
+
+INSTALL_LOCKED="$TEST_DIRECTORY/install-locked"
+mkdir -p "$INSTALL_LOCKED/install/.context-launcher-install.lock"
+test "$(INSTALL_ROOT="$INSTALL_LOCKED/install" CONTEXT_LAUNCHER_HOME="$INSTALL_LOCKED/other-support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
+test ! -e "$INSTALL_LOCKED/install/Context Launcher.app"
+
+EARLY_FAILURE="$TEST_DIRECTORY/early-failure"
+mkdir -p "$EARLY_FAILURE"
+test "$(CONTEXT_LAUNCHER_TEST_FAIL_EARLY=1 INSTALL_ROOT="$EARLY_FAILURE/install" CONTEXT_LAUNCHER_HOME="$EARLY_FAILURE/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
+install_redirected "$EARLY_FAILURE"
+test -e "$EARLY_FAILURE/install/Context Launcher.app"
 
 ROLLBACK="$TEST_DIRECTORY/rollback"
 mkdir -p "$ROLLBACK"

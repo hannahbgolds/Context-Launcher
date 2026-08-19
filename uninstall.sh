@@ -33,6 +33,10 @@ SUPPORT_MARKER="$CONTEXT_LAUNCHER_HOME/.context-launcher-install"
 CLI_DIRECTORY="$CONTEXT_LAUNCHER_HOME/bin"
 CLI_PATH="$CLI_DIRECTORY/context"
 CLI_HASH_PATH="$CLI_DIRECTORY/.context-launcher-context.sha256"
+SETUP_PENDING_PATH="$CONTEXT_LAUNCHER_HOME/setup-pending"
+CONTEXTS_PATH="$CONTEXT_LAUNCHER_HOME/contexts.json"
+ICONS_DIRECTORY="$CONTEXT_LAUNCHER_HOME/icons"
+LOCK_DIRECTORY="$CONTEXT_LAUNCHER_HOME/.context-launcher-install.lock"
 
 is_owned_bundle() {
     bundle_path=$1
@@ -62,6 +66,11 @@ is_owned_cli() {
         [ "$(shasum -a 256 "$CLI_PATH" | awk '{ print $1 }')" = "$(sed -n '1p' "$CLI_HASH_PATH")" ]
 }
 
+ROOT_OWNED=false
+if is_owned_support_root; then ROOT_OWNED=true; fi
+CLI_OWNED=false
+if is_owned_cli; then CLI_OWNED=true; fi
+
 APPLICATION_PATH="$INSTALL_ROOT/Context Launcher.app"
 if [ -d "$APPLICATION_PATH" ] && is_owned_bundle "$APPLICATION_PATH" "dev.contextlauncher.app"; then
     rm -R "$APPLICATION_PATH"
@@ -71,7 +80,7 @@ if is_owned_bundle "$INSTALL_ROOT/New.app" "dev.contextlauncher.context.new"; th
     rm -R "$INSTALL_ROOT/New.app"
 fi
 
-if is_owned_cli; then
+if [ "$CLI_OWNED" = true ]; then
     IDS_PATH=$(mktemp "${TMPDIR:-/tmp}/context-launcher-uninstall.XXXXXX")
     trap 'rm -f "$IDS_PATH"' EXIT HUP INT TERM
     if CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" "$CLI_PATH" list > "$IDS_PATH"; then
@@ -90,9 +99,18 @@ if is_owned_cli; then
 fi
 
 if [ "$PURGE_DATA" = true ]; then
-    if ! is_owned_support_root; then
+    if [ "$ROOT_OWNED" != true ]; then
         echo "Refusing to purge a non-owned or unsafe support directory." >&2
         exit 1
     fi
-    rm -R "$CONTEXT_LAUNCHER_HOME"
+    if [ -d "$LOCK_DIRECTORY" ]; then
+        echo "Refusing to purge while an installation is active." >&2
+        exit 1
+    fi
+    if [ -f "$CONTEXTS_PATH" ] && [ ! -L "$CONTEXTS_PATH" ]; then rm -f "$CONTEXTS_PATH"; fi
+    if [ -f "$SETUP_PENDING_PATH" ] && [ ! -L "$SETUP_PENDING_PATH" ]; then rm -f "$SETUP_PENDING_PATH"; fi
+    if [ -d "$ICONS_DIRECTORY" ] && [ ! -L "$ICONS_DIRECTORY" ]; then rm -R "$ICONS_DIRECTORY"; fi
+    if [ "$CLI_OWNED" = true ] && [ -d "$CLI_DIRECTORY" ] && [ ! -L "$CLI_DIRECTORY" ]; then rm -R "$CLI_DIRECTORY"; fi
+    if [ -f "$SUPPORT_MARKER" ] && [ ! -L "$SUPPORT_MARKER" ]; then rm -f "$SUPPORT_MARKER"; fi
+    rmdir "$CONTEXT_LAUNCHER_HOME" 2>/dev/null || :
 fi
