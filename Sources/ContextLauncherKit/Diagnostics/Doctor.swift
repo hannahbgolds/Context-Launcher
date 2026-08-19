@@ -59,7 +59,7 @@ public enum Doctor {
                 code: "chrome.available",
                 label: "Google Chrome",
                 url: environment.launchEnvironment.chromeApplicationURL,
-                required: contexts.contains { $0.chromeProfileID?.isEmpty == false && !$0.urls.isEmpty }
+                required: contexts.contains { $0.chromeProfileID?.isEmpty == false }
             ),
             applicationDiagnostic(
                 code: "vscode.available",
@@ -74,24 +74,39 @@ public enum Doctor {
         )
 
         for context in contexts {
-            diagnostics.append(launcherDiagnostic(for: context, in: environment.launcherDirectory, fileManager: fileManager))
+            diagnostics.append(launcherDiagnostic(for: context, among: contexts, in: environment.launcherDirectory, fileManager: fileManager))
 
-            for project in context.vscodeProjects where !fileManager.fileExists(atPath: project.path) {
-                diagnostics.append(Diagnostic(
-                    code: "project.missing",
-                    status: .failure,
-                    message: "VS Code project is missing: \(project.path)"
-                ))
+            for project in context.vscodeProjects {
+                if !ResourceValidator.exists(project, fileManager: fileManager) {
+                    diagnostics.append(Diagnostic(
+                        code: "project.missing",
+                        status: .failure,
+                        message: "VS Code project is missing: \(project.path)"
+                    ))
+                } else if !ResourceValidator.isValidExistingProject(project, fileManager: fileManager) {
+                    diagnostics.append(Diagnostic(
+                        code: "project.invalid",
+                        status: .failure,
+                        message: "VS Code project is not a folder or .code-workspace file: \(project.path)"
+                    ))
+                }
             }
 
             for application in context.applications {
                 let standardApplication = application.standardizedFileURL
-                guard !fileManager.fileExists(atPath: standardApplication.path) else { continue }
-                diagnostics.append(Diagnostic(
-                    code: "application.missing",
-                    status: .failure,
-                    message: "Application is missing: \(standardApplication.path)"
-                ))
+                if !ResourceValidator.exists(standardApplication, fileManager: fileManager) {
+                    diagnostics.append(Diagnostic(
+                        code: "application.missing",
+                        status: .failure,
+                        message: "Application is missing: \(standardApplication.path)"
+                    ))
+                } else if !ResourceValidator.isValidExistingApplication(standardApplication, fileManager: fileManager) {
+                    diagnostics.append(Diagnostic(
+                        code: "application.invalid",
+                        status: .failure,
+                        message: "Application is not an actual .app bundle directory: \(standardApplication.path)"
+                    ))
+                }
             }
         }
 
@@ -155,8 +170,8 @@ public enum Doctor {
         }
     }
 
-    private static func launcherDiagnostic(for context: LauncherContext, in directory: URL, fileManager: FileManager) -> Diagnostic {
-        let bundle = directory.appendingPathComponent("\(context.id).app")
+    private static func launcherDiagnostic(for context: LauncherContext, among contexts: [LauncherContext], in directory: URL, fileManager: FileManager) -> Diagnostic {
+        let bundle = directory.appendingPathComponent("\(LauncherBundleNaming.bundleName(for: context, among: contexts)).app")
         guard fileManager.fileExists(atPath: bundle.path) else {
             return Diagnostic(code: "launcher.missing", status: .warning, message: "Launcher bundle is missing: \(bundle.path)")
         }

@@ -9,6 +9,19 @@ CONTEXT_LAUNCHER_HOME="$TEST_DIRECTORY/config" "$BIN" list | grep 'No contexts c
 CONTEXT_LAUNCHER_HOME="$TEST_DIRECTORY/config" "$BIN" doctor | grep 'Config directory'
 test "$(CONTEXT_LAUNCHER_HOME="$TEST_DIRECTORY/config" "$BIN" launch absent >/dev/null 2>&1; echo $?)" != 0
 
+mkdir -p "$TEST_DIRECTORY/ids"
+printf '%s\n' \
+    '{"contexts":[{"applications":[],"icon":{"symbol":{"_0":"folder"}},"id":"second","name":"Second","subtitle":"Human output only","urls":[],"vscodeProjects":[]},{"applications":[],"icon":{"symbol":{"_0":"folder"}},"id":"first","name":"First","subtitle":"Human output only","urls":[],"vscodeProjects":[]}],"version":1}' \
+    > "$TEST_DIRECTORY/ids/contexts.json"
+test "$(CONTEXT_LAUNCHER_HOME="$TEST_DIRECTORY/ids" "$BIN" internal-context-ids)" = "first
+second"
+
+mkdir -p "$TEST_DIRECTORY/invalid"
+printf '%s\n' \
+    '{"contexts":[{"applications":[],"icon":{"symbol":{"_0":"folder"}},"id":"safe","name":"Safe\nvictim","subtitle":"","urls":[],"vscodeProjects":[]}],"version":1}' \
+    > "$TEST_DIRECTORY/invalid/contexts.json"
+test "$(CONTEXT_LAUNCHER_HOME="$TEST_DIRECTORY/invalid" "$BIN" internal-context-ids >/dev/null 2>&1; echo $?)" != 0
+
 mkdir -p "$TEST_DIRECTORY/support/bin"
 cp "$BIN" "$TEST_DIRECTORY/support/bin/context"
 printf '%s\n' '{"contexts":[],"version":1}' > "$TEST_DIRECTORY/support/contexts.json"

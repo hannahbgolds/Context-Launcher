@@ -106,17 +106,16 @@ fi
 if [ "$CLI_OWNED" = true ]; then
     IDS_PATH=$(mktemp "${TMPDIR:-/tmp}/context-launcher-uninstall.XXXXXX")
     ICONS_PATH=$(mktemp "${TMPDIR:-/tmp}/context-launcher-icons.XXXXXX")
-    if CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" "$CLI_PATH" list > "$IDS_PATH"; then
-        TAB=$(printf '\t')
-        while IFS="$TAB" read -r launcher_id ignored; do
-            case "$launcher_id" in
-                *[!a-z0-9-]* | -* | *- | *--* | '') continue ;;
-            esac
-            launcher_path="$INSTALL_ROOT/$launcher_id.app"
-            if is_owned_bundle "$launcher_path" "dev.contextlauncher.context.$launcher_id"; then
-                rm -R "$launcher_path"
-            fi
-        done < "$IDS_PATH"
+    if CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" "$CLI_PATH" internal-context-ids > "$IDS_PATH"; then
+        for launcher_path in "$INSTALL_ROOT"/*.app; do
+            [ -e "$launcher_path" ] || [ -L "$launcher_path" ] || continue
+            while IFS= read -r launcher_id; do
+                if is_owned_bundle "$launcher_path" "dev.contextlauncher.context.$launcher_id"; then
+                    rm -R "$launcher_path"
+                    break
+                fi
+            done < "$IDS_PATH"
+        done
     fi
     CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" "$CLI_PATH" internal-owned-icons > "$ICONS_PATH" || :
     rm -f "$CLI_PATH" "$CLI_HASH_PATH"

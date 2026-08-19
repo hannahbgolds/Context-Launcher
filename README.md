@@ -32,7 +32,7 @@ From a clone of this repository, run:
 The installer builds a release binary and installs:
 
 - `~/Applications/Context Launcher.app`
-- generated launcher apps such as `~/Applications/work.app` and `~/Applications/New.app`
+- generated launcher apps such as `~/Applications/Work.app` and `~/Applications/New.app`
 - configuration and the CLI under `~/Library/Application Support/ContextLauncher/`
 
 It creates generic `uni`, `leet`, `work`, and `org` starter contexts only when
@@ -49,11 +49,16 @@ Set a display name, a lowercase launch ID, optional subtitle, and either an SF
 Symbol or a local custom image. A launch ID uses lowercase letters, numbers,
 and single hyphens; it must be unique. Saving a context creates or updates its
 matching Spotlight launcher. Deleting a context removes its matching launcher.
+Launcher filenames use display names; duplicate names add the launch ID in
+parentheses, while the ID and bundle identifier stay unchanged.
 
 Add HTTP or HTTPS URLs, folders or `.code-workspace` files, and existing
 `.app` bundles. The editor's **Test Launch** button runs the pending setup
 without saving it first. **Diagnostics** reports unavailable profiles,
 applications, projects, and launcher bundles.
+
+URLs require a selected Chrome profile. A selected profile with no URLs is
+still opened or focused, which makes profile-only contexts useful.
 
 ## Chrome and VS Code
 
@@ -62,12 +67,13 @@ the profile directory name, display name, and email when Chrome provides it.
 It does not read browsing history, cookies, credentials, tokens, or browser
 databases.
 
-Chrome has no stable public API for routing every launch to an existing window
-for a particular profile. Context Launcher starts Chrome with the selected
-profile directory and configured URLs; Chrome or macOS may reuse a window or
-create another one, especially when Chrome is already running. Treat
-duplicate-window behavior as a Chrome-version-and-profile-dependent
-limitation.
+Chrome has no stable public API for mapping every window to an on-disk profile.
+Context Launcher makes a narrowly scoped, best-effort accessibility check for
+one unambiguous toolbar profile label. When that check is unavailable,
+ambiguous, or not permitted, it intentionally falls back to opening Chrome with
+the selected profile directory and structured URL arguments. Chrome may reuse
+a window or create another one, especially when it is already running. Treat
+duplicate-window behavior as a Chrome-version-and-profile-dependent limitation.
 
 Every saved folder or `.code-workspace` is opened in a separate VS Code window
 using `code --new-window`. Context Launcher looks for the `code` command in
@@ -97,8 +103,9 @@ context doctor
 `list` shows configured IDs, `launch` opens a saved context, `new` opens the
 configuration app ready to create one, `edit` opens an existing context, and
 `doctor` prints human-readable diagnostics. The CLI does not promise a
-machine-readable output format. `internal-generate-all` and
-`internal-owned-icons` are installer internals, not public commands.
+machine-readable output format. `internal-context-ids`,
+`internal-generate-all`, and `internal-owned-icons` are machine-only installer
+internals, not public commands.
 
 ## Troubleshooting
 
@@ -137,6 +144,7 @@ swift test
 swift build -c release
 sh Tests/CLISmokeTests.sh .build/release/context
 sh Tests/InstallerSmokeTests.sh
+sh Tests/SignalSmokeTests.sh
 ```
 
 The automated smoke tests redirect their install and data paths to temporary

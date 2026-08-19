@@ -60,8 +60,17 @@ public final class ContextLauncher {
     private let applicationOpener: ApplicationOpening
     private let chromeWindowTargeter: ChromeWindowTargeting?
 
+    public convenience init() {
+        self.init(
+            environment: .system,
+            processRunner: ProcessRunner(),
+            applicationOpener: WorkspaceApplicationOpener(),
+            chromeWindowTargeter: ChromeAppleScriptWindowTargeter()
+        )
+    }
+
     public init(
-        environment: LaunchEnvironment = .system,
+        environment: LaunchEnvironment,
         processRunner: ProcessRunning = ProcessRunner(),
         applicationOpener: ApplicationOpening = WorkspaceApplicationOpener(),
         chromeWindowTargeter: ChromeWindowTargeting? = nil

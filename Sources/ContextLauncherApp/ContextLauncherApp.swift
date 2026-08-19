@@ -14,6 +14,7 @@ struct ContextLauncherApplication: App {
             ContextListView()
                 .environmentObject(model)
                 .frame(minWidth: 920, minHeight: 640)
+                .onOpenURL { model.handle(url: $0) }
         }
         .defaultSize(width: 1080, height: 720)
     }

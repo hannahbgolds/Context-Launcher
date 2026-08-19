@@ -55,7 +55,7 @@ final class DoctorTests: XCTestCase {
 
     func testDoctorReportsInvalidLauncherBundle() throws {
         let launchers = temporaryDirectory.appendingPathComponent("Applications")
-        try FileManager.default.createDirectory(at: launchers.appendingPathComponent("work.app"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: launchers.appendingPathComponent("Work.app"), withIntermediateDirectories: true)
 
         let diagnostics = Doctor.run(
             environment: DoctorEnvironment(

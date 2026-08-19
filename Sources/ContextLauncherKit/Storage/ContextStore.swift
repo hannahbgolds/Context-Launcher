@@ -10,9 +10,18 @@ public struct ContextDocument: Codable, Equatable, Sendable {
     }
 }
 
-public enum ContextStoreError: Error, Equatable, Sendable {
+public enum ContextStoreError: LocalizedError, Equatable, Sendable {
     case unsupportedVersion(Int)
     case validation([ValidationIssue])
+
+    public var errorDescription: String? {
+        switch self {
+        case let .unsupportedVersion(version):
+            return "contexts.json uses unsupported version \(version)."
+        case let .validation(issues):
+            return issues.map(\.message).joined(separator: " ")
+        }
+    }
 }
 
 public final class ContextStore: @unchecked Sendable {

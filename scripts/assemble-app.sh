@@ -40,7 +40,10 @@ cleanup() {
         rm -R "$STAGING_ROOT"
     fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 mkdir -p "$STAGING_APPLICATION/Contents/MacOS"
 printf '%s\n' \
@@ -55,6 +58,11 @@ printf '%s\n' \
     '  <key>CFBundlePackageType</key><string>APPL</string>' \
     '  <key>CFBundleShortVersionString</key><string>1.0</string>' \
     '  <key>CFBundleVersion</key><string>1</string>' \
+    '  <key>CFBundleURLTypes</key>' \
+    '  <array><dict>' \
+    '    <key>CFBundleURLName</key><string>dev.contextlauncher.routes</string>' \
+    '    <key>CFBundleURLSchemes</key><array><string>contextlauncher</string></array>' \
+    '  </dict></array>' \
     '</dict>' \
     '</plist>' > "$STAGING_APPLICATION/Contents/Info.plist"
 cp "$SOURCE_BINARY" "$STAGING_APPLICATION/Contents/MacOS/ContextLauncherApp"

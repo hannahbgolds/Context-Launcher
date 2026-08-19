@@ -42,6 +42,8 @@ User data lives outside the repository at:
 
 `contexts.json` is a versioned JSON document written atomically. Reads validate
 the whole document and report malformed entries rather than executing them.
+Names and subtitles reject ASCII control characters so human-readable CLI
+output can never become a machine control channel.
 The repository contains only generic starter templates and never commits local
 profile identifiers, email addresses, project paths, or application choices.
 
@@ -81,7 +83,9 @@ Each generated launcher is a small, valid application bundle containing:
 
 The shim invokes the installed CLI with one fixed, validated context ID. It
 does not duplicate engine or configuration logic. `New.app` invokes
-`context new`, which opens the main application with `--new`.
+`context new`, which opens `contextlauncher://new` through Launch Services.
+The main application registers that URL scheme and handles new/edit routes in
+the existing process when it is already running.
 
 Launcher generation builds in a temporary sibling directory, validates the
 result, and atomically replaces the previous bundle. Saving a context creates
@@ -99,17 +103,19 @@ over the network.
 
 Launch execution follows this order:
 
-1. If a Chrome window for the configured profile is identifiable, focus that
-   window and open configured URLs in it through a narrowly scoped AppleScript.
+1. If accessibility exposes exactly one Chrome toolbar avatar whose label
+   unambiguously matches the configured profile, focus that window and open
+   configured URLs in it through narrowly scoped JXA UI scripting.
 2. Otherwise run `/usr/bin/open -na "Google Chrome" --args` with a structured
    `--profile-directory` argument and the validated URLs.
 3. If Chrome is absent, return an actionable warning and continue launching
    the remaining context items.
 
-Chrome does not expose a fully stable public API for mapping every running
-window to an on-disk profile. The implementation handles the common case and
-documents that some Chrome versions or ambiguous profiles may create another
-window.
+Chrome does not expose a stable public API for mapping every running window to
+an on-disk profile. The production adapter therefore declines missing,
+localized, inaccessible, duplicate, or otherwise ambiguous profile labels.
+The structured `open` command is the intentional supported fallback, and some
+Chrome versions or profiles may create another window.
 
 ## Visual Studio Code Launching
 
@@ -123,9 +129,11 @@ warnings and do not prevent other launch actions.
 ## Other Applications
 
 The editor uses a native file picker restricted to application bundles.
-Applications launch via `NSWorkspace` using standardized file URLs. Only
-existing `.app` bundles are accepted; arbitrary shell strings are never stored
-or executed.
+Applications launch via `NSWorkspace` using standardized file URLs. Present
+paths must be actual `.app` bundle directories; missing saved `.app` paths are
+retained as actionable warnings. Arbitrary shell strings are never stored or
+executed. Present VS Code paths must be directories or `.code-workspace` files;
+missing saved paths likewise remain warnings.
 
 ## Launch Planning, Validation, and Errors
 
@@ -138,6 +146,11 @@ IDs, URLs, project paths, application paths, and decoded configuration are
 validated at trust boundaries. One failed action does not cancel independent
 actions: execution returns a collection of successes and actionable warnings
 for the GUI or CLI to present.
+
+Configured URLs require a selected Chrome profile and are otherwise rejected
+with an actionable validation issue. A selected profile with zero URLs remains
+a valid launch action that focuses the safely identified window or uses the
+structured profile fallback.
 
 ## Configuration Application
 
@@ -174,15 +187,19 @@ context doctor
 
 `doctor` reports Chrome and profile discovery, VS Code availability, config and
 launcher directories, launcher validity, missing project paths, and broken
-application paths. Human-readable output is the initial interface; no unstable
-machine-readable output is promised.
+application paths. Human-readable output is the public interface; no unstable
+machine-readable public output is promised. The installer and uninstaller use
+a private `internal-context-ids` command sourced directly from validated
+storage and never parse `context list`.
 
 ## Installation and Uninstallation
 
 `install.sh` checks the macOS version and Swift toolchain, builds a release
 configuration, creates required user directories, assembles the main app
 bundle, installs the CLI, initializes starter configuration only when none
-exists, and generates launchers. It does not overwrite existing user data.
+exists, atomically marks that starter setup as pending, and generates
+launchers. It does not overwrite existing user data or any application bundle
+whose exact Context Launcher bundle identifier cannot be verified.
 
 `uninstall.sh` removes installed executables and generated application bundles.
 It preserves user configuration and copied icons by default and deletes them

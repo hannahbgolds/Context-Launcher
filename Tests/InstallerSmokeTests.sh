@@ -4,6 +4,13 @@ set -eu
 TEST_DIRECTORY=$(mktemp -d)
 trap 'rm -R "$TEST_DIRECTORY"' EXIT HUP INT TERM
 
+# Keep smoke verification isolated from the user's real Spotlight index.
+mkdir -p "$TEST_DIRECTORY/fake-bin"
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$TEST_DIRECTORY/fake-bin/mdimport"
+chmod +x "$TEST_DIRECTORY/fake-bin/mdimport"
+PATH="$TEST_DIRECTORY/fake-bin:$PATH"
+export PATH
+
 install_redirected() {
     INSTALL_ROOT="$1/install" CONTEXT_LAUNCHER_HOME="$1/support" ./install.sh --skip-build
 }
@@ -13,20 +20,62 @@ make_decoy() {
     printf '%s\n' \
         '<?xml version="1.0" encoding="UTF-8"?>' \
         '<plist version="1.0"><dict>' \
-        '<key>CFBundleIdentifier</key><string>dev.contextlauncher.context.decoy</string>' \
+        '<key>CFBundleIdentifier</key><string>'"${2:-dev.contextlauncher.context.decoy}"'</string>' \
         '</dict></plist>' > "$1/Contents/Info.plist"
+    printf '%s\n' "${3:-decoy}" > "$1/marker"
 }
+
+assert_decoy() {
+    test "$(cat "$1/marker")" = "$2"
+}
+
+CENTRAL_COLLISION="$TEST_DIRECTORY/central-collision"
+mkdir -p "$CENTRAL_COLLISION/install"
+make_decoy "$CENTRAL_COLLISION/install/Context Launcher.app" "com.example.central" "central decoy"
+test "$(INSTALL_ROOT="$CENTRAL_COLLISION/install" CONTEXT_LAUNCHER_HOME="$CENTRAL_COLLISION/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
+assert_decoy "$CENTRAL_COLLISION/install/Context Launcher.app" "central decoy"
+test ! -e "$CENTRAL_COLLISION/support/contexts.json"
+
+NEW_COLLISION="$TEST_DIRECTORY/new-collision"
+mkdir -p "$NEW_COLLISION/install"
+make_decoy "$NEW_COLLISION/install/New.app" "com.example.new" "new decoy"
+test "$(INSTALL_ROOT="$NEW_COLLISION/install" CONTEXT_LAUNCHER_HOME="$NEW_COLLISION/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
+assert_decoy "$NEW_COLLISION/install/New.app" "new decoy"
+test ! -e "$NEW_COLLISION/support/contexts.json"
+
+CONTEXT_COLLISION="$TEST_DIRECTORY/context-collision"
+mkdir -p "$CONTEXT_COLLISION/install"
+make_decoy "$CONTEXT_COLLISION/install/Uni.app" "com.example.uni" "context decoy"
+test "$(INSTALL_ROOT="$CONTEXT_COLLISION/install" CONTEXT_LAUNCHER_HOME="$CONTEXT_COLLISION/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
+assert_decoy "$CONTEXT_COLLISION/install/Uni.app" "context decoy"
+test ! -e "$CONTEXT_COLLISION/support/contexts.json"
+
+SYMLINK_COLLISION="$TEST_DIRECTORY/symlink-collision"
+mkdir -p "$SYMLINK_COLLISION/install"
+make_decoy "$SYMLINK_COLLISION/target.app" "dev.contextlauncher.context.new" "symlink target"
+ln -s "$SYMLINK_COLLISION/target.app" "$SYMLINK_COLLISION/install/New.app"
+test "$(INSTALL_ROOT="$SYMLINK_COLLISION/install" CONTEXT_LAUNCHER_HOME="$SYMLINK_COLLISION/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
+assert_decoy "$SYMLINK_COLLISION/target.app" "symlink target"
+test -L "$SYMLINK_COLLISION/install/New.app"
+test ! -e "$SYMLINK_COLLISION/support/contexts.json"
 
 PRIMARY="$TEST_DIRECTORY/primary"
 mkdir -p "$PRIMARY"
 install_redirected "$PRIMARY"
 
 test -x "$PRIMARY/install/Context Launcher.app/Contents/MacOS/ContextLauncherApp"
+test "$(plutil -extract CFBundleURLTypes.0.CFBundleURLSchemes.0 raw -o - "$PRIMARY/install/Context Launcher.app/Contents/Info.plist")" = 'contextlauncher'
 test -x "$PRIMARY/support/bin/context"
 test -f "$PRIMARY/install/New.app/Contents/Info.plist"
-for launcher in uni leet work org; do
+test -f "$PRIMARY/support/setup-pending"
+test ! -s "$PRIMARY/support/setup-pending"
+for launcher in Uni Leet Work Org; do
     test -f "$PRIMARY/install/$launcher.app/Contents/Info.plist"
 done
+
+rm "$PRIMARY/support/setup-pending"
+install_redirected "$PRIMARY"
+test ! -e "$PRIMARY/support/setup-pending"
 
 make_decoy "$PRIMARY/install/decoy.app"
 printf '%s\n' 'user replacement' > "$PRIMARY/support/bin/context"
@@ -35,7 +84,7 @@ INSTALL_ROOT="$PRIMARY/install" CONTEXT_LAUNCHER_HOME="$PRIMARY/support" ./unins
 
 test ! -e "$PRIMARY/install/Context Launcher.app"
 test ! -e "$PRIMARY/install/New.app"
-test -f "$PRIMARY/install/uni.app/Contents/Info.plist"
+test -f "$PRIMARY/install/Uni.app/Contents/Info.plist"
 test -f "$PRIMARY/install/decoy.app/Contents/Info.plist"
 test -f "$PRIMARY/support/contexts.json"
 test "$(cat "$PRIMARY/support/bin/context")" = 'user replacement'
@@ -43,9 +92,10 @@ test "$(cat "$PRIMARY/support/bin/context")" = 'user replacement'
 OWNED="$TEST_DIRECTORY/owned"
 mkdir -p "$OWNED"
 install_redirected "$OWNED"
+install_redirected "$OWNED"
 INSTALL_ROOT="$OWNED/install" CONTEXT_LAUNCHER_HOME="$OWNED/support" ./uninstall.sh
 test ! -e "$OWNED/install/New.app"
-test ! -e "$OWNED/install/uni.app"
+test ! -e "$OWNED/install/Uni.app"
 test ! -e "$OWNED/support/bin/context"
 test -f "$OWNED/support/contexts.json"
 
@@ -154,8 +204,27 @@ mkdir -p "$ROLLBACK"
 install_redirected "$ROLLBACK"
 printf '%s\n' 'old application' > "$ROLLBACK/install/Context Launcher.app/Contents/MacOS/ContextLauncherApp"
 printf '%s\n' 'old cli' > "$ROLLBACK/support/bin/context"
-printf '%s\n' 'old launcher' > "$ROLLBACK/install/uni.app/Contents/Info.plist"
+printf '%s\n' 'old launcher' > "$ROLLBACK/install/Uni.app/marker"
 test "$(CONTEXT_LAUNCHER_TEST_FAIL_AFTER_COPY=1 INSTALL_ROOT="$ROLLBACK/install" CONTEXT_LAUNCHER_HOME="$ROLLBACK/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
 test "$(cat "$ROLLBACK/install/Context Launcher.app/Contents/MacOS/ContextLauncherApp")" = 'old application'
 test "$(cat "$ROLLBACK/support/bin/context")" = 'old cli'
-test "$(cat "$ROLLBACK/install/uni.app/Contents/Info.plist")" = 'old launcher'
+test "$(cat "$ROLLBACK/install/Uni.app/marker")" = 'old launcher'
+
+NEWLINE_INJECTION="$TEST_DIRECTORY/newline-injection"
+mkdir -p "$NEWLINE_INJECTION/install" "$NEWLINE_INJECTION/support"
+printf '%s\n' \
+    '{"contexts":[{"applications":[],"icon":{"symbol":{"_0":"folder"}},"id":"safe","name":"Safe\nvictim","subtitle":"","urls":[],"vscodeProjects":[]}],"version":1}' \
+    > "$NEWLINE_INJECTION/support/contexts.json"
+make_decoy "$NEWLINE_INJECTION/install/victim.app" "dev.contextlauncher.context.victim" "newline victim"
+test "$(INSTALL_ROOT="$NEWLINE_INJECTION/install" CONTEXT_LAUNCHER_HOME="$NEWLINE_INJECTION/support" ./install.sh --skip-build >/dev/null 2>&1; echo $?)" != 0
+assert_decoy "$NEWLINE_INJECTION/install/victim.app" "newline victim"
+
+UNINSTALL_INJECTION="$TEST_DIRECTORY/uninstall-injection"
+mkdir -p "$UNINSTALL_INJECTION"
+install_redirected "$UNINSTALL_INJECTION"
+printf '%s\n' \
+    '{"contexts":[{"applications":[],"icon":{"symbol":{"_0":"folder"}},"id":"safe","name":"Safe\nvictim","subtitle":"","urls":[],"vscodeProjects":[]}],"version":1}' \
+    > "$UNINSTALL_INJECTION/support/contexts.json"
+make_decoy "$UNINSTALL_INJECTION/install/victim.app" "dev.contextlauncher.context.victim" "uninstall victim"
+INSTALL_ROOT="$UNINSTALL_INJECTION/install" CONTEXT_LAUNCHER_HOME="$UNINSTALL_INJECTION/support" ./uninstall.sh
+assert_decoy "$UNINSTALL_INJECTION/install/victim.app" "uninstall victim"

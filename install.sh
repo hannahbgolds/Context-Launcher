@@ -33,6 +33,10 @@ if [ -L "$CONTEXT_LAUNCHER_HOME" ]; then
     echo "CONTEXT_LAUNCHER_HOME must not be a symlink." >&2
     exit 1
 fi
+INSTALL_ROOT_CREATED=false
+SUPPORT_DIRECTORY_CREATED=false
+if [ ! -e "$INSTALL_ROOT" ] && [ ! -L "$INSTALL_ROOT" ]; then INSTALL_ROOT_CREATED=true; fi
+if [ ! -e "$CONTEXT_LAUNCHER_HOME" ] && [ ! -L "$CONTEXT_LAUNCHER_HOME" ]; then SUPPORT_DIRECTORY_CREATED=true; fi
 mkdir -p "$INSTALL_ROOT" "$CONTEXT_LAUNCHER_HOME"
 INSTALL_ROOT=$(cd -P "$INSTALL_ROOT" && pwd)
 CONTEXT_LAUNCHER_HOME=$(cd -P "$CONTEXT_LAUNCHER_HOME" && pwd)
@@ -59,14 +63,20 @@ APPLICATION_TOUCHED=false
 CLI_TOUCHED=false
 CLI_HASH_TOUCHED=false
 LAUNCHERS_GENERATED=false
+CONFIGURATION_INITIALIZED=false
+SETUP_PENDING_CREATED=false
+CLI_DIRECTORY_CREATED=false
 
 APPLICATION_PATH="$INSTALL_ROOT/Context Launcher.app"
 CLI_DIRECTORY="$CONTEXT_LAUNCHER_HOME/bin"
 CLI_PATH="$CLI_DIRECTORY/context"
 CLI_HASH_PATH="$CLI_DIRECTORY/.context-launcher-context.sha256"
 SUPPORT_MARKER="$CONTEXT_LAUNCHER_HOME/.context-launcher-install"
+CONTEXTS_PATH="$CONTEXT_LAUNCHER_HOME/contexts.json"
+SETUP_PENDING_PATH="$CONTEXT_LAUNCHER_HOME/setup-pending"
 BACKUP_DIRECTORY="$WORK_DIRECTORY/backup"
 IDS_PATH="$WORK_DIRECTORY/launcher-ids"
+LAUNCHER_PATHS_PATH="$WORK_DIRECTORY/launcher-paths"
 
 remove_file() {
     if [ -e "$1" ] || [ -L "$1" ]; then rm -f "$1" || :; fi
@@ -85,15 +95,18 @@ restore_bundle() {
 }
 
 rollback() {
-    if [ "$LAUNCHERS_GENERATED" = true ] && [ -f "$IDS_PATH" ]; then
-        while IFS= read -r launcher_id; do
-            remove_bundle "$INSTALL_ROOT/$launcher_id.app"
-        done < "$IDS_PATH"
+    if [ "$LAUNCHERS_GENERATED" = true ] && [ -f "$LAUNCHER_PATHS_PATH" ]; then
+        while IFS="$(printf '\t')" read -r launcher_name launcher_id; do
+            launcher_path="$INSTALL_ROOT/$launcher_name"
+            if is_owned_bundle "$launcher_path" "dev.contextlauncher.context.$launcher_id"; then
+                remove_bundle "$launcher_path"
+            fi
+        done < "$LAUNCHER_PATHS_PATH"
     fi
-    if [ -f "$IDS_PATH" ]; then
-        while IFS= read -r launcher_id; do
-            restore_bundle "$BACKUP_DIRECTORY/launchers/$launcher_id.app" "$INSTALL_ROOT/$launcher_id.app"
-        done < "$IDS_PATH"
+    if [ -f "$LAUNCHER_PATHS_PATH" ]; then
+        while IFS="$(printf '\t')" read -r launcher_name launcher_id; do
+            restore_bundle "$BACKUP_DIRECTORY/launchers/$launcher_name" "$INSTALL_ROOT/$launcher_name"
+        done < "$LAUNCHER_PATHS_PATH"
     fi
     if [ "$CLI_HASH_TOUCHED" = true ]; then remove_file "$CLI_HASH_PATH"; fi
     if [ "$CLI_TOUCHED" = true ]; then remove_file "$CLI_PATH"; fi
@@ -101,6 +114,8 @@ rollback() {
     restore_file "$BACKUP_DIRECTORY/cli-hash" "$CLI_HASH_PATH"
     restore_file "$BACKUP_DIRECTORY/cli" "$CLI_PATH"
     restore_bundle "$BACKUP_DIRECTORY/application" "$APPLICATION_PATH"
+    if [ "$SETUP_PENDING_CREATED" = true ]; then remove_file "$SETUP_PENDING_PATH"; fi
+    if [ "$CONFIGURATION_INITIALIZED" = true ]; then remove_file "$CONTEXTS_PATH"; fi
 }
 
 cleanup() {
@@ -108,11 +123,53 @@ cleanup() {
     if [ -d "$WORK_DIRECTORY" ]; then rm -R "$WORK_DIRECTORY" || :; fi
     if [ -d "$INSTALL_LOCK_DIRECTORY" ]; then rmdir "$INSTALL_LOCK_DIRECTORY" || :; fi
     if [ -d "$LOCK_DIRECTORY" ]; then rmdir "$LOCK_DIRECTORY" || :; fi
+    if [ "$COMMITTED" != true ]; then
+        if [ "$CLI_DIRECTORY_CREATED" = true ] && [ -d "$CLI_DIRECTORY" ]; then rmdir "$CLI_DIRECTORY" 2>/dev/null || :; fi
+        if [ "$SUPPORT_DIRECTORY_CREATED" = true ] && [ -d "$CONTEXT_LAUNCHER_HOME" ]; then rmdir "$CONTEXT_LAUNCHER_HOME" 2>/dev/null || :; fi
+        if [ "$INSTALL_ROOT_CREATED" = true ] && [ -d "$INSTALL_ROOT" ]; then rmdir "$INSTALL_ROOT" 2>/dev/null || :; fi
+    fi
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+is_owned_bundle() {
+    bundle_path=$1
+    bundle_id=$2
+    plist_path="$bundle_path/Contents/Info.plist"
+    [ -d "$bundle_path" ] && [ ! -L "$bundle_path" ] && [ -f "$plist_path" ] && \
+        [ "$(plutil -extract CFBundleIdentifier raw -o - "$plist_path" 2>/dev/null || true)" = "$bundle_id" ]
+}
+
+preflight_bundle() {
+    bundle_path=$1
+    bundle_id=$2
+    if [ -e "$bundle_path" ] || [ -L "$bundle_path" ]; then
+        if ! is_owned_bundle "$bundle_path" "$bundle_id"; then
+            echo "Refusing to replace $bundle_path: it is a symlink or is not owned by Context Launcher as $bundle_id. Move or rename it, then try again." >&2
+            exit 1
+        fi
+    fi
+}
+
+write_starter_configuration() {
+    destination=$1
+    printf '%s\n' \
+        '{' \
+        '  "contexts" : [' \
+        '    {"applications":[],"icon":{"symbol":{"_0":"graduationcap"}},"id":"uni","name":"Uni","subtitle":"University","urls":[],"vscodeProjects":[]},' \
+        '    {"applications":[],"icon":{"symbol":{"_0":"chevron.left.forwardslash.chevron.right"}},"id":"leet","name":"Leet","subtitle":"Practice","urls":[],"vscodeProjects":[]},' \
+        '    {"applications":[],"icon":{"symbol":{"_0":"briefcase"}},"id":"work","name":"Work","subtitle":"Work","urls":[],"vscodeProjects":[]},' \
+        '    {"applications":[],"icon":{"symbol":{"_0":"person.3"}},"id":"org","name":"Org","subtitle":"Organization","urls":[],"vscodeProjects":[]}' \
+        '  ],' \
+        '  "version" : 1' \
+        '}' > "$destination"
+}
 
 mkdir -p "$BACKUP_DIRECTORY/launchers"
 : > "$IDS_PATH"
+: > "$LAUNCHER_PATHS_PATH"
 
 if [ "${CONTEXT_LAUNCHER_TEST_FAIL_EARLY:-}" = 1 ]; then
     echo "Forced early installation failure." >&2
@@ -133,29 +190,6 @@ if [ -e "$CLI_DIRECTORY" ] && [ -L "$CLI_DIRECTORY" ]; then
     echo "Context Launcher bin directory must not be a symlink." >&2
     exit 1
 fi
-mkdir -p "$CLI_DIRECTORY"
-
-CONTEXTS_PATH="$CONTEXT_LAUNCHER_HOME/contexts.json"
-if [ ! -e "$CONTEXTS_PATH" ]; then
-    CONFIGURATION_TEMPORARY=$(mktemp "$CONTEXT_LAUNCHER_HOME/.contexts.XXXXXX")
-    trap 'rm -f "$CONFIGURATION_TEMPORARY"; cleanup' EXIT HUP INT TERM
-    printf '%s\n' \
-        '{' \
-        '  "contexts" : [' \
-        '    {"applications":[],"icon":{"symbol":{"_0":"graduationcap"}},"id":"uni","name":"Uni","subtitle":"University","urls":[],"vscodeProjects":[]},' \
-        '    {"applications":[],"icon":{"symbol":{"_0":"chevron.left.forwardslash.chevron.right"}},"id":"leet","name":"Leet","subtitle":"Practice","urls":[],"vscodeProjects":[]},' \
-        '    {"applications":[],"icon":{"symbol":{"_0":"briefcase"}},"id":"work","name":"Work","subtitle":"Work","urls":[],"vscodeProjects":[]},' \
-        '    {"applications":[],"icon":{"symbol":{"_0":"person.3"}},"id":"org","name":"Org","subtitle":"Organization","urls":[],"vscodeProjects":[]}' \
-        '  ],' \
-        '  "version" : 1' \
-        '}' > "$CONFIGURATION_TEMPORARY"
-    if ln "$CONFIGURATION_TEMPORARY" "$CONTEXTS_PATH"; then
-        rm -f "$CONFIGURATION_TEMPORARY"
-    elif [ ! -e "$CONTEXTS_PATH" ]; then
-        echo "Could not initialize contexts.json." >&2
-        exit 1
-    fi
-fi
 
 STAGED_APPLICATION="$WORK_DIRECTORY/Context Launcher.app"
 STAGED_CLI="$WORK_DIRECTORY/context"
@@ -163,15 +197,61 @@ sh "$SCRIPT_DIRECTORY/scripts/assemble-app.sh" "$RELEASE_DIRECTORY" "$STAGED_APP
 cp "$CLI_SOURCE" "$STAGED_CLI"
 chmod 755 "$STAGED_CLI"
 
-CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" "$STAGED_CLI" list > "$WORK_DIRECTORY/context-list"
-TAB=$(printf '\t')
-while IFS="$TAB" read -r launcher_id ignored; do
-    case "$launcher_id" in
-        *[!a-z0-9-]* | -* | *- | *--* | '') continue ;;
-    esac
-    printf '%s\n' "$launcher_id" >> "$IDS_PATH"
-done < "$WORK_DIRECTORY/context-list"
+preflight_bundle "$APPLICATION_PATH" "dev.contextlauncher.app"
+
+STARTER_INITIALIZATION_NEEDED=false
+CONFIGURATION_HOME="$CONTEXT_LAUNCHER_HOME"
+if [ ! -e "$CONTEXTS_PATH" ] && [ ! -L "$CONTEXTS_PATH" ]; then
+    STARTER_INITIALIZATION_NEEDED=true
+    CONFIGURATION_HOME="$WORK_DIRECTORY/support"
+    mkdir -p "$CONFIGURATION_HOME"
+    write_starter_configuration "$CONFIGURATION_HOME/contexts.json"
+fi
+
+CONTEXT_LAUNCHER_HOME="$CONFIGURATION_HOME" "$STAGED_CLI" internal-context-ids > "$IDS_PATH"
 printf '%s\n' new >> "$IDS_PATH"
+
+PREVIEW_LAUNCHERS="$WORK_DIRECTORY/preview-launchers"
+CONTEXT_LAUNCHER_HOME="$CONFIGURATION_HOME" CONTEXT_LAUNCHER_CLI_PATH="$CLI_PATH" \
+    INSTALL_ROOT="$PREVIEW_LAUNCHERS" "$STAGED_CLI" internal-generate-all
+for preview_bundle in "$PREVIEW_LAUNCHERS"/*.app; do
+    launcher_name=$(basename "$preview_bundle")
+    bundle_id=$(plutil -extract CFBundleIdentifier raw -o - "$preview_bundle/Contents/Info.plist")
+    case "$bundle_id" in
+        dev.contextlauncher.context.*) launcher_id=${bundle_id#dev.contextlauncher.context.} ;;
+        *) echo "Generated launcher has an unexpected bundle identifier: $bundle_id" >&2; exit 1 ;;
+    esac
+    if ! grep -F -x "$launcher_id" "$IDS_PATH" >/dev/null; then
+        echo "Generated launcher has an unexpected context ID: $launcher_id" >&2
+        exit 1
+    fi
+    printf '%s\t%s\n' "$launcher_name" "$launcher_id" >> "$LAUNCHER_PATHS_PATH"
+    preflight_bundle "$INSTALL_ROOT/$launcher_name" "$bundle_id"
+done
+
+if [ "$STARTER_INITIALIZATION_NEEDED" = true ]; then
+    if [ -e "$SETUP_PENDING_PATH" ] || [ -L "$SETUP_PENDING_PATH" ]; then
+        echo "Refusing to initialize starter data because setup-pending already exists." >&2
+        exit 1
+    fi
+    if ! ln "$CONFIGURATION_HOME/contexts.json" "$CONTEXTS_PATH"; then
+        echo "Could not initialize contexts.json." >&2
+        exit 1
+    fi
+    CONFIGURATION_INITIALIZED=true
+    SETUP_PENDING_TEMPORARY="$WORK_DIRECTORY/setup-pending"
+    : > "$SETUP_PENDING_TEMPORARY"
+    if ! ln "$SETUP_PENDING_TEMPORARY" "$SETUP_PENDING_PATH"; then
+        echo "Could not initialize setup-pending." >&2
+        exit 1
+    fi
+    SETUP_PENDING_CREATED=true
+fi
+
+if [ ! -d "$CLI_DIRECTORY" ]; then
+    mkdir -p "$CLI_DIRECTORY"
+    CLI_DIRECTORY_CREATED=true
+fi
 
 if [ -e "$APPLICATION_PATH" ] || [ -L "$APPLICATION_PATH" ]; then mv "$APPLICATION_PATH" "$BACKUP_DIRECTORY/application"; fi
 APPLICATION_TOUCHED=true
@@ -185,12 +265,12 @@ if [ -e "$CLI_HASH_PATH" ] || [ -L "$CLI_HASH_PATH" ]; then mv "$CLI_HASH_PATH" 
 CLI_HASH_TOUCHED=true
 mv "$WORK_DIRECTORY/cli-hash" "$CLI_HASH_PATH"
 
-while IFS= read -r launcher_id; do
-    launcher_path="$INSTALL_ROOT/$launcher_id.app"
+while IFS="$(printf '\t')" read -r launcher_name launcher_id; do
+    launcher_path="$INSTALL_ROOT/$launcher_name"
     if [ -e "$launcher_path" ] || [ -L "$launcher_path" ]; then
-        mv "$launcher_path" "$BACKUP_DIRECTORY/launchers/$launcher_id.app"
+        mv "$launcher_path" "$BACKUP_DIRECTORY/launchers/$launcher_name"
     fi
-done < "$IDS_PATH"
+done < "$LAUNCHER_PATHS_PATH"
 
 if [ "${CONTEXT_LAUNCHER_TEST_FAIL_AFTER_COPY:-}" = 1 ]; then
     echo "Forced installation failure after application and CLI copy." >&2
@@ -198,8 +278,12 @@ if [ "${CONTEXT_LAUNCHER_TEST_FAIL_AFTER_COPY:-}" = 1 ]; then
 fi
 
 LAUNCHERS_GENERATED=true
-CONTEXT_LAUNCHER_HOME="$CONTEXT_LAUNCHER_HOME" INSTALL_ROOT="$INSTALL_ROOT" \
-    sh "$SCRIPT_DIRECTORY/scripts/generate-apps.sh" "$CLI_PATH" "$INSTALL_ROOT"
+while IFS="$(printf '\t')" read -r launcher_name launcher_id; do
+    mv "$PREVIEW_LAUNCHERS/$launcher_name" "$INSTALL_ROOT/$launcher_name"
+    if command -v mdimport >/dev/null 2>&1; then
+        mdimport "$INSTALL_ROOT/$launcher_name" || true
+    fi
+done < "$LAUNCHER_PATHS_PATH"
 
 if [ -e "$SUPPORT_MARKER" ] || [ -L "$SUPPORT_MARKER" ]; then
     if [ -L "$SUPPORT_MARKER" ] || [ ! -f "$SUPPORT_MARKER" ] || \

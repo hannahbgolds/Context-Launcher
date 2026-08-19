@@ -57,6 +57,15 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertThrowsError(try ContextStore(fileURL: file).load())
     }
 
+    func testMalformedExistingContextReportsItsActionableValidationIssue() throws {
+        let file = temporaryDirectory.appendingPathComponent("contexts.json")
+        try Data(#"{"contexts":[{"applications":[],"icon":{"symbol":{"_0":"folder"}},"id":"web","name":"Web","subtitle":"","urls":["https:\/\/example.com"],"vscodeProjects":[]}],"version":1}"#.utf8).write(to: file)
+
+        XCTAssertThrowsError(try ContextStore(fileURL: file).load()) { error in
+            XCTAssertTrue(error.localizedDescription.contains("Chrome profile"))
+        }
+    }
+
     func testStarterContextsContainNoPersonalValues() throws {
         let data = try JSONEncoder().encode(StarterContexts.all)
         let text = String(decoding: data, as: UTF8.self)

@@ -1,9 +1,44 @@
 import Foundation
 
-public enum LauncherBundleError: Error {
+public enum LauncherBundleNaming {
+    public static func bundleName(for context: LauncherContext, among contexts: [LauncherContext]) -> String {
+        let base = safeDisplayName(context.name, fallback: context.id)
+        let duplicate = contexts.filter {
+            safeDisplayName($0.name, fallback: $0.id).caseInsensitiveCompare(base) == .orderedSame
+        }.count > 1
+        let reserved = ["New", "Context Launcher"].contains {
+            $0.caseInsensitiveCompare(base) == .orderedSame
+        }
+        return duplicate || reserved ? "\(base) (\(context.id))" : base
+    }
+
+    private static func safeDisplayName(_ name: String, fallback: String) -> String {
+        let replaced = name.unicodeScalars.map { scalar -> String in
+            scalar == "/" || scalar == ":" || scalar.value < 32 || scalar.value == 127 ? "-" : String(scalar)
+        }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !replaced.isEmpty, replaced != ".", replaced != ".." else { return fallback }
+        return replaced.hasPrefix(".") ? "-" + replaced.dropFirst() : replaced
+    }
+}
+
+public enum LauncherBundleError: LocalizedError {
     case invalidContextID(String)
     case invalidBundle
     case compilerFailed
+    case destinationCollision(URL, expectedIdentifier: String)
+
+    public var errorDescription: String? {
+        switch self {
+        case let .invalidContextID(id):
+            return "Invalid context ID: \(id)"
+        case .invalidBundle:
+            return "The generated launcher bundle is invalid."
+        case .compilerFailed:
+            return "The launcher executable could not be compiled."
+        case let .destinationCollision(url, identifier):
+            return "Refusing to replace \(url.path): it is a symlink or is not owned by Context Launcher as \(identifier). Move or rename the existing item, then try again."
+        }
+    }
 }
 
 public struct LauncherBundleGenerator {
@@ -15,9 +50,15 @@ public struct LauncherBundleGenerator {
 
     @discardableResult
     public func generate(for context: LauncherContext, cliURL: URL, in destination: URL) throws -> URL {
-        guard isValidID(context.id) else { throw LauncherBundleError.invalidContextID(context.id) }
+        try generate(for: context, among: [context], cliURL: cliURL, in: destination)
+    }
+
+    @discardableResult
+    public func generate(for context: LauncherContext, among contexts: [LauncherContext], cliURL: URL, in destination: URL) throws -> URL {
+        guard isValidID(context.id), context.id != "new" else { throw LauncherBundleError.invalidContextID(context.id) }
         return try generate(
             name: context.name,
+            bundleName: LauncherBundleNaming.bundleName(for: context, among: contexts),
             id: context.id,
             icon: context.icon,
             arguments: ["launch", context.id],
@@ -30,6 +71,7 @@ public struct LauncherBundleGenerator {
     public func generateNewLauncher(cliURL: URL, in destination: URL) throws -> URL {
         try generate(
             name: "New",
+            bundleName: "New",
             id: "new",
             icon: .symbol("plus.circle"),
             arguments: ["new"],
@@ -40,18 +82,44 @@ public struct LauncherBundleGenerator {
 
     public func remove(id: String, from destination: URL) throws {
         guard isValidID(id) else { throw LauncherBundleError.invalidContextID(id) }
-        let bundle = bundleURL(for: id, in: destination)
-        guard FileManager.default.fileExists(atPath: bundle.path) else { return }
-        let plistURL = bundle.appendingPathComponent("Contents/Info.plist")
-        let plist = NSDictionary(contentsOf: plistURL)
-        guard plist?["CFBundleIdentifier"] as? String == bundleIdentifier(for: id) else { return }
+        let identifier = bundleIdentifier(for: id)
+        guard let destinationAttributes = try? FileManager.default.attributesOfItem(atPath: destination.path) else { return }
+        guard destinationAttributes[.type] as? FileAttributeType == .typeDirectory else {
+            throw LauncherBundleError.destinationCollision(destination, expectedIdentifier: identifier)
+        }
+        let candidates = try FileManager.default.contentsOfDirectory(
+            at: destination,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ).filter { $0.pathExtension.caseInsensitiveCompare("app") == .orderedSame }
+        for bundle in candidates {
+            if isOwnedBundle(at: bundle, identifier: identifier) {
+                try FileManager.default.removeItem(at: bundle)
+            } else if bundle.deletingPathExtension().lastPathComponent.caseInsensitiveCompare(id) == .orderedSame {
+                throw LauncherBundleError.destinationCollision(bundle, expectedIdentifier: identifier)
+            }
+        }
+    }
+
+    public func remove(_ context: LauncherContext, from destination: URL) throws {
+        guard isValidID(context.id) else { throw LauncherBundleError.invalidContextID(context.id) }
+        let bundle = bundleURL(named: LauncherBundleNaming.bundleName(for: context, among: [context]), in: destination)
+        guard itemExists(at: bundle) else { return }
+        let identifier = bundleIdentifier(for: context.id)
+        guard isOwnedBundle(at: bundle, identifier: identifier) else {
+            throw LauncherBundleError.destinationCollision(bundle, expectedIdentifier: identifier)
+        }
         try FileManager.default.removeItem(at: bundle)
     }
 
-    private func generate(name: String, id: String, icon: ContextIcon, arguments: [String], cliURL: URL, in destination: URL) throws -> URL {
+    private func generate(name: String, bundleName: String, id: String, icon: ContextIcon, arguments: [String], cliURL: URL, in destination: URL) throws -> URL {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
-        let bundle = bundleURL(for: id, in: destination)
+        let bundle = bundleURL(named: bundleName, in: destination)
+        let identifier = bundleIdentifier(for: id)
+        if itemExists(at: bundle), !isOwnedBundle(at: bundle, identifier: identifier) {
+            throw LauncherBundleError.destinationCollision(bundle, expectedIdentifier: identifier)
+        }
         let staging = destination.appendingPathComponent(".\(id)-\(UUID().uuidString).app", isDirectory: true)
         let compilerCache = destination.appendingPathComponent(".\(id)-\(UUID().uuidString).module-cache", isDirectory: true)
         defer { try? fileManager.removeItem(at: staging) }
@@ -67,7 +135,7 @@ public struct LauncherBundleGenerator {
             "CFBundleDisplayName": name,
             "CFBundleExecutable": "launcher",
             "CFBundleIconFile": "AppIcon",
-            "CFBundleIdentifier": bundleIdentifier(for: id),
+            "CFBundleIdentifier": identifier,
             "CFBundleName": name,
             "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": "1.0",
@@ -80,13 +148,14 @@ public struct LauncherBundleGenerator {
             try fileManager.removeItem(at: compilerCache)
         }
         try iconRenderer.render(icon, destination: resources.appendingPathComponent("AppIcon.icns"))
-        guard isValidBundle(at: staging, identifier: bundleIdentifier(for: id)) else { throw LauncherBundleError.invalidBundle }
+        guard isValidBundle(at: staging, identifier: identifier) else { throw LauncherBundleError.invalidBundle }
 
         if fileManager.fileExists(atPath: bundle.path) {
             _ = try fileManager.replaceItemAt(bundle, withItemAt: staging)
         } else {
             try fileManager.moveItem(at: staging, to: bundle)
         }
+        try removeOtherOwnedBundles(identifier: identifier, keeping: bundle, from: destination)
         return bundle
     }
 
@@ -132,8 +201,8 @@ public struct LauncherBundleGenerator {
         return plist["CFBundleIdentifier"] as? String == identifier
     }
 
-    private func bundleURL(for id: String, in destination: URL) -> URL {
-        destination.appendingPathComponent(id == "new" ? "New.app" : "\(id).app", isDirectory: true)
+    private func bundleURL(named name: String, in destination: URL) -> URL {
+        destination.appendingPathComponent("\(name).app", isDirectory: true)
     }
 
     private func bundleIdentifier(for id: String) -> String {
@@ -142,6 +211,32 @@ public struct LauncherBundleGenerator {
 
     private func isValidID(_ id: String) -> Bool {
         id.range(of: "^[a-z0-9]+(?:-[a-z0-9]+)*$", options: .regularExpression) != nil
+    }
+
+    private func itemExists(at url: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil
+    }
+
+    private func isOwnedBundle(at bundle: URL, identifier: String) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: bundle.path),
+              attributes[.type] as? FileAttributeType == .typeDirectory,
+              let plist = NSDictionary(contentsOf: bundle.appendingPathComponent("Contents/Info.plist")) else {
+            return false
+        }
+        return plist["CFBundleIdentifier"] as? String == identifier
+    }
+
+    private func removeOtherOwnedBundles(identifier: String, keeping bundle: URL, from destination: URL) throws {
+        let candidates = try FileManager.default.contentsOfDirectory(
+            at: destination,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )
+        for candidate in candidates
+        where candidate.standardizedFileURL.path != bundle.standardizedFileURL.path
+            && isOwnedBundle(at: candidate, identifier: identifier) {
+            try FileManager.default.removeItem(at: candidate)
+        }
     }
 
     private func swiftStringLiteral(_ value: String) -> String {

@@ -4,13 +4,13 @@ import ContextLauncherKit
 private enum CLIError: LocalizedError {
     case contextNotFound(String)
     case installedApplicationMissing(URL)
-    case commandFailed(String)
+    case invalidRoute
 
     var errorDescription: String? {
         switch self {
         case let .contextNotFound(id): return "No context with ID '\(id)' is configured."
         case let .installedApplicationMissing(url): return "Context Launcher is not installed at \(url.path)."
-        case let .commandFailed(command): return "Command failed: \(command)"
+        case .invalidRoute: return "The requested Context Launcher URL is invalid."
         }
     }
 }
@@ -36,7 +36,9 @@ private struct Runtime {
     }
 
     var cliURL: URL {
-        supportDirectory.appendingPathComponent("bin/context")
+        ProcessInfo.processInfo.environment["CONTEXT_LAUNCHER_CLI_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? supportDirectory.appendingPathComponent("bin/context")
     }
 }
 
@@ -44,18 +46,15 @@ private func usage() {
     FileHandle.standardError.write(Data("Usage: context list | launch <id> | new | edit <id> | doctor\n".utf8))
 }
 
-private func openApplication(_ applicationURL: URL, arguments: [String]) throws {
+private func openApplication(_ applicationURL: URL, route: ContextLauncherRoute) throws {
     guard FileManager.default.fileExists(atPath: applicationURL.path) else {
         throw CLIError.installedApplicationMissing(applicationURL)
     }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-    process.arguments = [applicationURL.path, "--args"] + arguments
-    try process.run()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-        throw CLIError.commandFailed("open \(applicationURL.path)")
-    }
+    guard let routeURL = route.url else { throw CLIError.invalidRoute }
+    try ProcessRunner().run(
+        executable: URL(fileURLWithPath: "/usr/bin/open"),
+        arguments: ["-b", "dev.contextlauncher.app", routeURL.absoluteString]
+    )
 }
 
 private func printDiagnostics(_ diagnostics: [Diagnostic]) {
@@ -84,10 +83,11 @@ private func run(_ arguments: [String], runtime: Runtime) throws -> Int32 {
             FileHandle.standardError.write(Data("Warning: \(warning)\n".utf8))
         }
     case ["new"]:
-        try openApplication(runtime.applicationURL, arguments: ["--new"])
+        try openApplication(runtime.applicationURL, route: .new)
     case let command where command.count == 2 && command[0] == "edit":
         let id = command[1]
-        try openApplication(runtime.applicationURL, arguments: ["--edit", id])
+        guard ContextValidator.isValidID(id) else { throw CLIError.invalidRoute }
+        try openApplication(runtime.applicationURL, route: .edit(id))
     case ["doctor"]:
         let contexts = try runtime.store.load()
         printDiagnostics(Doctor.run(
@@ -100,10 +100,15 @@ private func run(_ arguments: [String], runtime: Runtime) throws -> Int32 {
         ))
     case ["internal-generate-all"]:
         let generator = LauncherBundleGenerator()
-        for context in try runtime.store.load() {
-            try generator.generate(for: context, cliURL: runtime.cliURL, in: runtime.installRoot)
+        let contexts = try runtime.store.load()
+        for context in contexts {
+            try generator.generate(for: context, among: contexts, cliURL: runtime.cliURL, in: runtime.installRoot)
         }
         try generator.generateNewLauncher(cliURL: runtime.cliURL, in: runtime.installRoot)
+    case ["internal-context-ids"]:
+        for id in try runtime.store.load().map(\.id).sorted() {
+            print(id)
+        }
     case ["internal-owned-icons"]:
         let iconsDirectory = runtime.supportDirectory.appendingPathComponent("icons", isDirectory: true).standardizedFileURL
         let names = Set(try runtime.store.load().compactMap { context -> String? in

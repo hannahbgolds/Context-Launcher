@@ -47,6 +47,10 @@ final class AppModel: ObservableObject {
         originalContextID != nil && allowsStorageMutations && !isSynchronizingLaunchers
     }
 
+    var canUseGlobalActions: Bool {
+        allowsStorageMutations && !needsOnboarding && !showsOnboardingCompletion && !isSynchronizingLaunchers
+    }
+
     init(
         arguments: [String] = Array(CommandLine.arguments.dropFirst()),
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -65,7 +69,7 @@ final class AppModel: ObservableObject {
         self.launcherSync = launcherSync ?? { contexts, includingNew in
             let generator = LauncherBundleGenerator()
             for context in contexts {
-                try generator.generate(for: context, cliURL: cliURL, in: launcherDirectory)
+                try generator.generate(for: context, among: contexts, cliURL: cliURL, in: launcherDirectory)
             }
             if includingNew {
                 try generator.generateNewLauncher(cliURL: cliURL, in: launcherDirectory)
@@ -120,6 +124,23 @@ final class AppModel: ObservableObject {
         refreshDiagnostics()
     }
 
+    func handle(url: URL) {
+        guard let route = ContextLauncherRoute(url: url) else {
+            presentError("Invalid Context Launcher link", message: "The URL is not a valid contextlauncher://new or contextlauncher://edit/<id> link.")
+            return
+        }
+        guard !needsOnboarding, !showsOnboardingCompletion else {
+            presentError("Finish setup first", message: "Complete Context Launcher setup before opening New or Edit links.")
+            return
+        }
+        switch route {
+        case .new:
+            beginNewContext()
+        case let .edit(id):
+            beginEditing(id: id)
+        }
+    }
+
     func save(_ context: LauncherContext) async {
         guard requireStorageAccess(), requireIdleLauncherSync() else { return }
         var updated = contexts
@@ -147,7 +168,7 @@ final class AppModel: ObservableObject {
             if let previousID, previousID != context.id {
                 try LauncherBundleGenerator().remove(id: previousID, from: launcherDirectory)
             }
-            try await runLauncherSync(for: [context], includingNew: true)
+            try await runLauncherSync(for: contexts, includingNew: true)
             refreshDiagnostics()
             alert = AppAlert(title: "Context saved", message: "The \(context.name) launcher is ready for Spotlight.")
         } catch {
@@ -240,6 +261,7 @@ final class AppModel: ObservableObject {
             refreshDiagnostics()
             alert = AppAlert(title: "Launchers synchronized", message: "Your Spotlight launchers are up to date.")
         } catch {
+            refreshDiagnostics()
             present(error, title: "Couldn’t synchronize launchers")
         }
     }

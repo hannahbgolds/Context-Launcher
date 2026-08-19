@@ -17,21 +17,22 @@ struct ContextListView: View {
             }
             .navigationTitle("Context Launcher")
             .toolbar {
-                ToolbarItemGroup {
-                    Button {
-                        model.beginNewContext()
-                    } label: {
-                        Label("New Context", systemImage: "plus")
-                    }
-                    .help("Create a context")
-                    .disabled(!model.allowsStorageMutations || model.needsOnboarding || model.isSynchronizingLaunchers)
+                if model.canUseGlobalActions {
+                    ToolbarItemGroup {
+                        Button {
+                            model.beginNewContext()
+                        } label: {
+                            Label("New Context", systemImage: "plus")
+                        }
+                        .help("Create a context")
 
-                    Button {
-                        model.showDiagnostics()
-                    } label: {
-                        Label("Diagnostics", systemImage: "stethoscope")
+                        Button {
+                            model.showDiagnostics()
+                        } label: {
+                            Label("Diagnostics", systemImage: "stethoscope")
+                        }
+                        .help("Show diagnostics")
                     }
-                    .help("Show diagnostics")
                 }
             }
         } detail: {
